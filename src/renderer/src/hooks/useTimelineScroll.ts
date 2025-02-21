@@ -40,7 +40,7 @@ function useTimelineScroll({ wheelSensitivity, mouseWheelZoomModifierKey, mouseW
     const makeUnit = (v: number) => ((direction * v) > 0 ? 1 : -1);
 
     if (wheelEvent[keyMap[mouseWheelZoomModifierKey]]) {
-      zoomRel(direction * pixelY * wheelSensitivity * 0.4);
+      zoomRel(-direction * pixelY * wheelSensitivity * 0.4);
     } else if (wheelEvent[keyMap[mouseWheelFrameSeekModifierKey]]) {
       shortStep(makeUnit(pixelX + pixelY));
     } else if (wheelEvent[keyMap[mouseWheelKeyframeSeekModifierKey]]) {
