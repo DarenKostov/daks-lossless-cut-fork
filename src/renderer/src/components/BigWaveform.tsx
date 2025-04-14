@@ -1,12 +1,12 @@
-import { memo, useEffect, useState, useCallback, useRef, CSSProperties, MouseEventHandler, WheelEventHandler } from 'react';
+import { memo, useEffect, useState, useCallback, useRef, CSSProperties, MouseEventHandler, WheelEventHandler, useMemo } from 'react';
 import { Spinner } from 'evergreen-ui';
 
 import { ffmpegExtractWindow } from '../util/constants';
-import { RenderableWaveform } from '../types';
+import { WaveformSlice } from '../types';
 
 
 function BigWaveform({ waveforms, relevantTime, playing, fileDurationNonZero, zoom, seekRel, darkMode }: {
-  waveforms: RenderableWaveform[],
+  waveforms: WaveformSlice[],
   relevantTime: number,
   playing: boolean,
   fileDurationNonZero: number,
@@ -17,7 +17,7 @@ function BigWaveform({ waveforms, relevantTime, playing, fileDurationNonZero, zo
   const windowSize = ffmpegExtractWindow * 2;
   const windowStart = Math.max(0, relevantTime - windowSize);
   const windowEnd = relevantTime + windowSize;
-  const filtered = waveforms.filter((waveform) => waveform.from >= windowStart && waveform.to <= windowEnd);
+  const filtered = useMemo(() => waveforms.filter((waveform) => waveform.from >= windowStart && waveform.to <= windowEnd), [waveforms, windowEnd, windowStart]);
 
   const scaleFactor = zoom;
 

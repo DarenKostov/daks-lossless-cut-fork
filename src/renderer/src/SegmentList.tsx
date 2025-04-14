@@ -17,7 +17,7 @@ import { useSegColors } from './contexts';
 import { mySpring } from './animations';
 import { getSegmentTags } from './segments';
 import TagEditor from './components/TagEditor';
-import { ContextMenuTemplate, FormatTimecode, GetFrameCount, InverseCutSegment, SegmentBase, SegmentTags, StateSegment } from './types';
+import { ContextMenuTemplate, DefiniteSegmentBase, FormatTimecode, GetFrameCount, InverseCutSegment, SegmentBase, SegmentTags, StateSegment } from './types';
 import { UseSegments } from './hooks/useSegments';
 
 
@@ -25,7 +25,8 @@ const buttonBaseStyle = {
   margin: '0 3px', borderRadius: 3, color: 'white', cursor: 'pointer',
 };
 
-const neutralButtonColor = 'var(--gray8)';
+const disabledButtonStyle = { color: 'var(--gray10)', backgroundColor: 'var(--gray6)' };
+const neutralButtonColor = 'var(--gray9)';
 
 // eslint-disable-next-line react/display-name
 const Segment = memo(({
@@ -54,7 +55,7 @@ const Segment = memo(({
   jumpSegEnd,
   addSegment,
   onEditSegmentTags,
-  onExtractSegmentFramesAsImages,
+  onExtractSegmentsFramesAsImages,
   onExtractSelectedSegmentsFramesAsImages,
   onInvertSelectedSegments,
   onDuplicateSegmentClick,
@@ -66,7 +67,7 @@ const Segment = memo(({
   getFrameCount: GetFrameCount,
   updateSegOrder: UseSegments['updateSegOrder'],
   onClick: (i: number) => void,
-  onRemovePress: UseSegments['removeCutSegment'],
+  onRemovePress: UseSegments['removeSegment'],
   onRemoveSelected: UseSegments['removeSelectedSegments'],
   onLabelSelectedSegments: UseSegments['labelSelectedSegments'],
   onReorderPress: (i: number) => Promise<void>,
@@ -84,7 +85,7 @@ const Segment = memo(({
   jumpSegEnd: (i: number) => void,
   addSegment: UseSegments['addSegment'],
   onEditSegmentTags: (i: number) => void,
-  onExtractSegmentFramesAsImages: (segments: Pick<SegmentBase, 'start' | 'end'>[]) => Promise<void>,
+  onExtractSegmentsFramesAsImages: (segments: Pick<SegmentBase, 'start' | 'end'>[]) => Promise<void>,
   onExtractSelectedSegmentsFramesAsImages: () => void,
   onInvertSelectedSegments: UseSegments['invertSelectedSegments'],
   onDuplicateSegmentClick: UseSegments['duplicateSegment'],
@@ -137,9 +138,9 @@ const Segment = memo(({
       { type: 'separator' },
 
       { label: t('Segment tags'), click: () => onEditSegmentTags(index) },
-      { label: t('Extract frames as image files'), click: () => onExtractSegmentFramesAsImages([seg]) },
+      { label: t('Extract frames as image files'), click: () => onExtractSegmentsFramesAsImages([seg]) },
     ];
-  }, [invertCutSegments, t, addSegment, onLabelSelectedSegments, onRemoveSelected, onExtractSelectedSegmentsFramesAsImages, updateSegOrder, index, jumpSegStart, jumpSegEnd, onLabelPress, onRemovePress, onDuplicateSegmentClick, seg, onSelectSingleSegment, onSelectAllSegments, onDeselectAllSegments, onSelectAllMarkers, onSelectSegmentsByLabel, onSelectSegmentsByExpr, onInvertSelectedSegments, onMutateSegmentsByExpr, onReorderPress, onEditSegmentTags, onExtractSegmentFramesAsImages]);
+  }, [invertCutSegments, t, addSegment, onLabelSelectedSegments, onRemoveSelected, onExtractSelectedSegmentsFramesAsImages, updateSegOrder, index, jumpSegStart, jumpSegEnd, onLabelPress, onRemovePress, onDuplicateSegmentClick, seg, onSelectSingleSegment, onSelectAllSegments, onDeselectAllSegments, onSelectAllMarkers, onSelectSegmentsByLabel, onSelectSegmentsByExpr, onInvertSelectedSegments, onMutateSegmentsByExpr, onReorderPress, onEditSegmentTags, onExtractSegmentsFramesAsImages]);
 
   useContextMenu(ref, contextMenuTemplate);
 
@@ -158,14 +159,20 @@ const Segment = memo(({
   }, 300, [isActive]);
 
   function renderNumber() {
-    if (invertCutSegments || !('segColorIndex' in seg)) return <FaSave style={{ color: saveColor, marginRight: 5, verticalAlign: 'middle' }} size={14} />;
+    if (invertCutSegments || !('segColorIndex' in seg)) {
+      return <FaSave style={{ color: saveColor, marginRight: 5, verticalAlign: 'middle' }} size={14} />;
+    }
 
     const segColor = getSegColor(seg);
 
     const color = segColor.desaturate(0.25).lightness(darkMode ? 35 : 55);
     const borderColor = darkMode ? color.lighten(0.5) : color.darken(0.3);
 
-    return <b style={{ cursor: 'grab', color: 'white', padding: '0 4px', marginRight: 3, marginLeft: -3, background: color.string(), border: `1px solid ${isActive ? borderColor.string() : 'transparent'}`, borderRadius: 10, fontSize: 12 }}>{index + 1}</b>;
+    return (
+      <b style={{ cursor: 'grab', color: 'white', padding: '0 4px', marginRight: 3, marginLeft: -3, background: color.string(), border: `1px solid ${isActive ? borderColor.string() : 'transparent'}`, borderRadius: 10, fontSize: 12 }}>
+        {index + 1}
+      </b>
+    );
   }
 
   const onDoubleClick = useCallback(() => {
@@ -242,15 +249,14 @@ function SegmentList({
   updateSegOrder,
   updateSegOrders,
   addSegment,
-  removeCutSegment,
+  removeSegment,
   onRemoveSelected,
   onLabelSegment,
   currentCutSeg,
-  segmentAtCursor,
+  firstSegmentAtCursor,
   toggleSegmentsList,
   splitCurrentSegment,
   selectedSegments,
-  isSegmentSelected,
   onSelectSingleSegment,
   onToggleSegmentSelected,
   onDeselectAllSegments,
@@ -259,7 +265,7 @@ function SegmentList({
   onSelectSegmentsByExpr,
   onMutateSegmentsByExpr,
   onSelectAllMarkers,
-  onExtractSegmentFramesAsImages,
+  onExtractSegmentsFramesAsImages,
   onExtractSelectedSegmentsFramesAsImages,
   onLabelSelectedSegments,
   onInvertSelectedSegments,
@@ -283,15 +289,14 @@ function SegmentList({
   updateSegOrder: UseSegments['updateSegOrder'],
   updateSegOrders: UseSegments['updateSegOrders'],
   addSegment: UseSegments['addSegment'],
-  removeCutSegment: UseSegments['removeCutSegment'],
+  removeSegment: UseSegments['removeSegment'],
   onRemoveSelected: UseSegments['removeSelectedSegments'],
   onLabelSegment: UseSegments['labelSegment'],
   currentCutSeg: UseSegments['currentCutSeg'],
-  segmentAtCursor: StateSegment | undefined,
+  firstSegmentAtCursor: StateSegment | undefined,
   toggleSegmentsList: () => void,
   splitCurrentSegment: UseSegments['splitCurrentSegment'],
-  selectedSegments: UseSegments['selectedSegmentsOrInverse'],
-  isSegmentSelected: UseSegments['isSegmentSelected'],
+  selectedSegments: DefiniteSegmentBase[],
   onSelectSingleSegment: UseSegments['selectOnlySegment'],
   onToggleSegmentSelected: UseSegments['toggleSegmentSelected'],
   onDeselectAllSegments: UseSegments['deselectAllSegments'],
@@ -300,7 +305,7 @@ function SegmentList({
   onSelectSegmentsByExpr: UseSegments['selectSegmentsByExpr'],
   onSelectAllMarkers: UseSegments['selectAllMarkers'],
   onMutateSegmentsByExpr: UseSegments['mutateSegmentsByExpr'],
-  onExtractSegmentFramesAsImages: (segments: Pick<SegmentBase, 'start' | 'end'>[]) => Promise<void>,
+  onExtractSegmentsFramesAsImages: (segments: Pick<SegmentBase, 'start' | 'end'>[]) => Promise<void>,
   onExtractSelectedSegmentsFramesAsImages: () => void,
   onLabelSelectedSegments: UseSegments['labelSelectedSegments'],
   onInvertSelectedSegments: UseSegments['invertSelectedSegments'],
@@ -318,6 +323,12 @@ function SegmentList({
   const { getSegColor } = useSegColors();
 
   const { invertCutSegments, simpleMode, darkMode } = useUserSettings();
+
+  const getButtonColor = useCallback((seg: StateSegment | undefined, next?: boolean) => getSegColor(seg ? { segColorIndex: next ? seg.segColorIndex + 1 : seg.segColorIndex } : undefined).desaturate(0.3).lightness(darkMode ? 45 : 55).string(), [darkMode, getSegColor]);
+  const currentSegColor = useMemo(() => getButtonColor(currentCutSeg), [currentCutSeg, getButtonColor]);
+  const segAtCursorColor = useMemo(() => getButtonColor(firstSegmentAtCursor), [getButtonColor, firstSegmentAtCursor]);
+
+  const segmentsTotal = useMemo(() => selectedSegments.reduce((acc, seg) => (seg.end == null ? 0 : seg.end - seg.start) + acc, 0), [selectedSegments]);
 
   const segmentsOrInverse: (InverseCutSegment | StateSegment)[] = invertCutSegments ? inverseCutSegments : cutSegments;
 
@@ -356,12 +367,6 @@ function SegmentList({
   }, [cutSegments.length, t, updateSegOrder]);
 
   function renderFooter() {
-    const getButtonColor = (seg: StateSegment | undefined) => getSegColor(seg).desaturate(0.3).lightness(darkMode ? 45 : 55).string();
-    const currentSegColor = getButtonColor(currentCutSeg);
-    const segAtCursorColor = getButtonColor(segmentAtCursor);
-
-    const segmentsTotal = selectedSegments.reduce((acc, seg) => (seg.end == null ? 0 : seg.end - seg.start) + acc, 0);
-
     return (
       <>
         <div style={{ display: 'flex', padding: '5px 0', alignItems: 'center', justifyContent: 'center', borderBottom: '1px solid var(gray6)' }}>
@@ -375,10 +380,10 @@ function SegmentList({
 
           <FaMinus
             size={24}
-            style={{ ...buttonBaseStyle, background: cutSegments.length >= 2 ? currentSegColor : neutralButtonColor }}
+            style={{ ...buttonBaseStyle, ...(cutSegments.length >= 2 ? { backgroundColor: currentSegColor } : disabledButtonStyle) }}
             role="button"
-            title={`${t('Remove segment')} ${currentSegIndex + 1}`}
-            onClick={() => removeCutSegment(currentSegIndex)}
+            title={t('Remove cutpoint from segment {{segmentNumber}}', { segmentNumber: currentSegIndex + 1 })}
+            onClick={() => removeSegment(currentSegIndex)}
           />
 
           {!invertCutSegments && !simpleMode && (
@@ -387,7 +392,7 @@ function SegmentList({
                 size={16}
                 title={t('Change segment order')}
                 role="button"
-                style={{ ...buttonBaseStyle, padding: 4, background: currentSegColor }}
+                style={{ ...buttonBaseStyle, padding: 4, ...(cutSegments.length >= 2 ? { backgroundColor: currentSegColor } : disabledButtonStyle) }}
                 onClick={() => onReorderSegs(currentSegIndex)}
               />
 
@@ -395,7 +400,7 @@ function SegmentList({
                 size={16}
                 title={t('Label segment')}
                 role="button"
-                style={{ ...buttonBaseStyle, padding: 4, background: currentSegColor }}
+                style={{ ...buttonBaseStyle, padding: 4, ...(cutSegments.length > 0 ? { backgroundColor: currentSegColor } : disabledButtonStyle) }}
                 onClick={() => onLabelSegment(currentSegIndex)}
               />
             </>
@@ -405,16 +410,16 @@ function SegmentList({
             size={22}
             title={t('Split segment at cursor')}
             role="button"
-            style={{ ...buttonBaseStyle, padding: 1, background: segmentAtCursor ? segAtCursorColor : neutralButtonColor }}
+            style={{ ...buttonBaseStyle, padding: 1, ...(firstSegmentAtCursor ? { backgroundColor: segAtCursorColor } : disabledButtonStyle) }}
             onClick={splitCurrentSegment}
           />
 
           {!invertCutSegments && (
             <FaRegCheckCircle
               size={22}
-              title={t('Invert selected segments')}
+              title={t('Invert segment selection')}
               role="button"
-              style={{ ...buttonBaseStyle, padding: 1, background: segmentAtCursor ? segAtCursorColor : neutralButtonColor }}
+              style={{ ...buttonBaseStyle, padding: 1, ...(cutSegments.length > 0 ? { backgroundColor: neutralButtonColor } : disabledButtonStyle) }}
               onClick={onInvertSelectedSegments}
             />
           )}
@@ -491,7 +496,7 @@ function SegmentList({
         <div style={{ padding: '0 .1em 0 .3em', overflowX: 'hidden', overflowY: 'scroll', flexGrow: 1 }} className="consistent-scrollbar">
           <ReactSortable list={sortableList} setList={setSortableList} disabled={!!invertCutSegments} handle=".segment-handle">
             {sortableList.map(({ id, seg }, index) => {
-              const selected = !invertCutSegments && isSegmentSelected({ segId: seg.segId });
+              const selected = 'selected' in seg ? seg.selected : true;
               return (
                 <Segment
                   key={id}
@@ -501,7 +506,7 @@ function SegmentList({
                   onClick={onSegClick}
                   addSegment={addSegment}
                   onRemoveSelected={onRemoveSelected}
-                  onRemovePress={removeCutSegment}
+                  onRemovePress={removeSegment}
                   onReorderPress={onReorderSegs}
                   onLabelPress={onLabelSegment}
                   jumpSegStart={jumpSegStart}
@@ -518,7 +523,7 @@ function SegmentList({
                   onSelectSegmentsByLabel={onSelectSegmentsByLabel}
                   onSelectSegmentsByExpr={onSelectSegmentsByExpr}
                   onMutateSegmentsByExpr={onMutateSegmentsByExpr}
-                  onExtractSegmentFramesAsImages={onExtractSegmentFramesAsImages}
+                  onExtractSegmentsFramesAsImages={onExtractSegmentsFramesAsImages}
                   onExtractSelectedSegmentsFramesAsImages={onExtractSelectedSegmentsFramesAsImages}
                   onLabelSelectedSegments={onLabelSelectedSegments}
                   onSelectAllMarkers={onSelectAllMarkers}
@@ -530,7 +535,7 @@ function SegmentList({
           </ReactSortable>
         </div>
 
-        {segmentsOrInverse.length > 0 && renderFooter()}
+        {renderFooter()}
       </motion.div>
     </>
   );

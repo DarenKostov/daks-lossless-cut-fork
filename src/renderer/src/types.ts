@@ -42,6 +42,7 @@ export const llcProjectV2Schema = z.object({
     end: z.number().optional(),
     name: z.string(),
     tags: segmentTagsSchema.optional(),
+    selected: z.boolean().optional(),
   }).array(),
 });
 
@@ -53,6 +54,11 @@ export interface SegmentBase {
   name?: string | undefined,
 }
 
+export interface DefiniteSegmentBase {
+  start: number,
+  end: number,
+}
+
 export interface SegmentColorIndex {
   segColorIndex: number,
 }
@@ -61,18 +67,17 @@ export interface StateSegment extends SegmentBase, SegmentColorIndex {
   name: string;
   segId: string;
   tags?: SegmentTags | undefined;
+  initial?: true,
+  selected: boolean,
 }
 
-export interface SegmentToExport {
-  start: number,
-  end: number,
+export interface SegmentToExport extends DefiniteSegmentBase {
+  originalIndex: number,
   name?: string | undefined;
   tags?: SegmentTags | undefined;
 }
 
-export interface InverseCutSegment {
-  start: number,
-  end: number,
+export interface InverseCutSegment extends DefiniteSegmentBase {
   segId: string;
 }
 
@@ -85,15 +90,24 @@ export type EdlImportType = 'youtube' | EdlFileType;
 
 export type EdlExportType = 'csv' | 'tsv-human' | 'csv-human' | 'csv-frames' | 'srt' | 'llc';
 
-export type TunerType = 'wheelSensitivity' | 'keyboardNormalSeekSpeed' | 'keyboardSeekSpeed2' | 'keyboardSeekSpeed3' | 'keyboardSeekAccFactor';
+export type TunerType = 'wheelSensitivity' | 'waveformHeight' | 'keyboardNormalSeekSpeed' | 'keyboardSeekSpeed2' | 'keyboardSeekSpeed3' | 'keyboardSeekAccFactor';
 
-export interface RenderableWaveform {
+export interface WaveformBase {
   createdAt: Date,
+}
+
+export interface WaveformSlice extends WaveformBase {
   from: number,
   to: number,
   duration: number,
-  url?: string,
+  url?: string, // undefined while rendering
 }
+
+export interface OverviewWaveform extends WaveformBase {
+  url: string,
+}
+
+export type RenderableWaveform = WaveformSlice | OverviewWaveform;
 
 export type FfmpegCommandLog = { command: string, time: Date }[];
 

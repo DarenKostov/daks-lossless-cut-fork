@@ -8,7 +8,7 @@ import { getSuffixedOutPath, transferTimestamps, getOutFileExtension, getOutDir,
 import { isCuttingStart, isCuttingEnd, runFfmpegWithProgress, getFfCommandLine, getDuration, createChaptersFromSegments, readFileMeta, getExperimentalArgs, getVideoTimescaleArgs, logStdoutStderr, runFfmpegConcat, RefuseOverwriteError, runFfmpeg } from '../ffmpeg';
 import { getMapStreamsArgs, getStreamIdsToCopy } from '../util/streams';
 import { getSmartCutParams } from '../smartcut';
-import { isDurationValid } from '../segments';
+import { getGuaranteedSegments, isDurationValid } from '../segments';
 import { FFprobeStream } from '../../../../ffprobe';
 import { AvoidNegativeTs, Html5ifyMode, PreserveMetadata } from '../../../../types';
 import { AllFilesMeta, Chapter, CopyfileStreams, CustomTagsByFile, LiteFFprobeStream, ParamsByStreamId, SegmentToExport } from '../types';
@@ -300,7 +300,7 @@ function useFfmpegOperations({ filePath, treatInputFileModifiedTimeAsStart, trea
 
     const chaptersInputIndex = copyFileStreamsFiltered.length;
 
-    const rotationArgs = rotation !== undefined ? ['-metadata:s:v:0', `rotate=${360 - rotation}`] : [];
+    const rotationArgs = rotation !== undefined ? ['-display_rotation:v:0', String(360 - rotation)] : [];
 
     // This function tries to calculate the output stream index needed for -metadata:s:x and -disposition:x arguments
     // It is based on the assumption that copyFileStreamsFiltered contains the order of the input files (and their respective streams orders) sent to ffmpeg, to hopefully calculate the same output stream index values that ffmpeg does internally.
@@ -383,6 +383,8 @@ function useFfmpegOperations({ filePath, treatInputFileModifiedTimeAsStart, trea
 
       ...getOutputPlaybackRateArgs(),
 
+      ...rotationArgs,
+
       ...inputArgs,
 
       ...mapStreamsArgs,
@@ -404,8 +406,6 @@ function useFfmpegOperations({ filePath, treatInputFileModifiedTimeAsStart, trea
       '-ignore_unknown',
 
       ...getExperimentalArgs(ffmpegExperimental),
-
-      ...rotationArgs,
 
       ...getVideoTimescaleArgs(videoTimebase),
 
@@ -503,7 +503,7 @@ function useFfmpegOperations({ filePath, treatInputFileModifiedTimeAsStart, trea
     console.log('customTagsByFile', customTagsByFile);
     console.log('paramsByStreamId', paramsByStreamId);
 
-    const segments = segmentsIn.length > 0 ? segmentsIn : [{ start: 0, end: fileDuration ?? 0, name: '' }];
+    const segments = getGuaranteedSegments(segmentsIn, fileDuration);
 
     const singleProgresses: Record<number, number> = {};
     function onSingleProgress(id: number, singleProgress: number) {

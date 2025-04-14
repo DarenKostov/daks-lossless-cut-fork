@@ -64,6 +64,8 @@ Windows store version is built as a Desktop Bridge app (with `runFullTrust` capa
 
 ## Releasing
 
+Before releasing, consider [Maintainence chores](#maintainence-chores) first.
+
 ### Build new version
 
 - `git checkout master`
@@ -72,7 +74,7 @@ Windows store version is built as a Desktop Bridge app (with `runFullTrust` capa
   - `git checkout stores`
   - `npm version patch`
 - *If normal GitHub-first release*
-  - `npm version minor`
+  - `npm version minor && git --no-pager show`
 - `git push --follow-tags`
 - Wait for build and draft in Github actions
 
@@ -114,10 +116,12 @@ Find the [latest PR](https://github.com/mifi/lossless-cut/pulls) from Weblate an
 
 ## Minimum OS version
 
-Minimum supported OS versions for Electron. As of electron 22:
+Minimum supported OS versions for Electron. As of Electron 35:
 
-- MacOS High Sierra 10.13
+- MacOS 11 Big Sur
 - Windows 10
+
+Note that older versions of LosslessCut still work on older operating systems.
 
 ### MacOS [`LSMinimumSystemVersion`](https://developer.apple.com/documentation/bundleresources/information_property_list/lsminimumsystemversion)
 
@@ -145,9 +149,10 @@ Links:
 ## Maintainence chores
 
 ### Keep dependencies up to date
-- ffmpeg
-- `electron`, `@electron/remote` and upgrade [electron.vite.config.ts](./electron.vite.config.ts) `target`s.
-- `package.json`
+- FFmpeg: [ffmpeg-build-script](https://github.com/mifi/ffmpeg-build-script), [ffmpeg-builds](https://github.com/mifi/ffmpeg-builds)
+- `electron` and upgrade [electron.vite.config.ts](./electron.vite.config.ts) `target`s.
+- `@electron/remote`
+- `package.json` / `yarn.lock`
 
 ### i18n
 ```bash

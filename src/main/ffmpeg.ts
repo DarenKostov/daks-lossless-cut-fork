@@ -173,17 +173,32 @@ export async function runFfprobe(args: readonly string[], { timeout = isDev ? 10
   }
 }
 
-export async function renderWaveformPng({ filePath, start, duration, color, streamIndex }: {
-  filePath: string, start: number, duration: number, color: string, streamIndex: number,
+export async function renderWaveformPng({ filePath, start, duration, resample, color, streamIndex, timeout }: {
+  filePath: string,
+  start?: number,
+  duration?: number,
+  resample?: number,
+  color: string,
+  streamIndex: number,
+  timeout?: number,
 }): Promise<Waveform> {
   const args1 = [
     '-hide_banner',
     '-i', filePath,
-    '-ss', String(start),
-    '-t', String(duration),
-    '-c', 'copy',
     '-vn',
     '-map', `0:${streamIndex}`,
+    ...(start != null ? ['-ss', String(start)] : []),
+    ...(duration != null ? ['-t', String(duration)] : []),
+    ...(resample != null ? [
+      // the operation is faster if we resample
+      // the higher the resample rate, the faster the resample
+      // but the slower the showwavespic operation will be...
+      // https://github.com/mifi/lossless-cut/issues/260#issuecomment-605603456
+      '-c:a', 'pcm_s32le',
+      '-ar', String(resample),
+    ] : [
+      '-c', 'copy',
+    ]),
     '-f', 'matroska', // mpegts doesn't support vorbis etc
     '-',
   ];
@@ -198,36 +213,25 @@ export async function renderWaveformPng({ filePath, start, duration, color, stre
     '-',
   ];
 
-  logger.info(`${getFfCommandLine('ffmpeg1', args1)} | \n${getFfCommandLine('ffmpeg2', args2)}`);
+  logger.info(`${getFfCommandLine('ffmpeg', args1)} | \n${getFfCommandLine('ffmpeg', args2)}`);
 
   let ps1: ResultPromise<{ encoding: 'buffer' }> | undefined;
   let ps2: ResultPromise<{ encoding: 'buffer' }> | undefined;
   try {
-    ps1 = runFfmpegProcess(args1, { buffer: false }, { logCli: false });
-    ps2 = runFfmpegProcess(args2, undefined, { logCli: false });
+    ps1 = runFfmpegProcess(args1, { buffer: false, ...(timeout != null && { timeout }) }, { logCli: false });
+    ps2 = runFfmpegProcess(args2, timeout != null ? { timeout } : undefined, { logCli: false });
     assert(ps1.stdout != null);
     assert(ps2.stdin != null);
     ps1.stdout.pipe(ps2.stdin);
 
-    const timer = setTimeout(() => {
-      ps1?.kill();
-      ps2?.kill();
-      logger.warn('ffmpeg timed out');
-    }, 10000);
-
-    let stdout;
-    try {
-      ({ stdout } = await ps2);
-    } finally {
-      clearTimeout(timer);
-    }
+    const { stdout } = await ps2;
 
     return {
       buffer: Buffer.from(stdout),
     };
   } catch (err) {
-    if (ps1) ps1.kill();
-    if (ps2) ps2.kill();
+    ps1?.kill();
+    ps2?.kill();
     throw err;
   }
 }
@@ -260,8 +264,9 @@ interface DetectedSegment {
 }
 
 // https://stackoverflow.com/questions/35675529/using-ffmpeg-how-to-do-a-scene-change-detection-with-timecode
-export async function detectSceneChanges({ filePath, minChange, onProgress, onSegmentDetected, from, to }: {
+export async function detectSceneChanges({ filePath, streamId, minChange, onProgress, onSegmentDetected, from, to }: {
   filePath: string,
+  streamId: number | undefined
   minChange: number | string,
   onProgress: (p: number) => void,
   onSegmentDetected: (p: DetectedSegment) => void,
@@ -271,7 +276,8 @@ export async function detectSceneChanges({ filePath, minChange, onProgress, onSe
   const args = [
     '-hide_banner',
     ...getInputSeekArgs({ filePath, from, to }),
-    '-filter_complex', `select='gt(scene,${minChange})',metadata=print:file=-:direct=1`, // direct=1 to flush stdout immediately
+    '-map', streamId != null ? `0:${streamId}` : 'v:0',
+    '-filter:v', `select='gt(scene,${minChange})',metadata=print:file=-:direct=1`, // direct=1 to flush stdout immediately
     '-f', 'null', '-',
   ];
   const process = runFfmpegProcess(args, { buffer: false });
@@ -352,8 +358,9 @@ async function detectIntervals({ filePath, customArgs, onProgress, onSegmentDete
 
 const mapFilterOptions = (options: Record<string, string>) => Object.entries(options).map(([key, value]) => `${key}=${value}`).join(':');
 
-export async function blackDetect({ filePath, filterOptions, boundingMode, onProgress, onSegmentDetected, from, to }: {
+export async function blackDetect({ filePath, streamId, filterOptions, boundingMode, onProgress, onSegmentDetected, from, to }: {
   filePath: string,
+  streamId: number | undefined,
   filterOptions: Record<string, string>,
   boundingMode: boolean,
   onProgress: (p: number) => void,
@@ -384,12 +391,16 @@ export async function blackDetect({ filePath, filterOptions, boundingMode, onPro
       }
       return { start, end };
     },
-    customArgs: ['-vf', `blackdetect=${mapFilterOptions(filterOptions)}`, '-an'],
+    customArgs: [
+      '-map', streamId != null ? `0:${streamId}` : 'v:0',
+      '-filter:v', `blackdetect=${mapFilterOptions(filterOptions)}`,
+    ],
   });
 }
 
-export async function silenceDetect({ filePath, filterOptions, boundingMode, onProgress, onSegmentDetected, from, to }: {
+export async function silenceDetect({ filePath, streamId, filterOptions, boundingMode, onProgress, onSegmentDetected, from, to }: {
   filePath: string,
+  streamId: number | undefined,
   filterOptions: Record<string, string>,
   boundingMode: boolean,
   onProgress: (p: number) => void,
@@ -420,11 +431,14 @@ export async function silenceDetect({ filePath, filterOptions, boundingMode, onP
       }
       return { start, end };
     },
-    customArgs: ['-af', `silencedetect=${mapFilterOptions(filterOptions)}`, '-vn'],
+    customArgs: [
+      '-map', streamId != null ? `0:${streamId}` : 'a:0',
+      '-filter:a', `silencedetect=${mapFilterOptions(filterOptions)}`,
+    ],
   });
 }
 
-function getFffmpegJpegQuality(quality: number) {
+function getFfmpegJpegQuality(quality: number) {
   // Normal range for JPEG is 2-31 with 31 being the worst quality.
   const qMin = 2;
   const qMax = 31;
@@ -432,7 +446,7 @@ function getFffmpegJpegQuality(quality: number) {
 }
 
 function getQualityOpts({ captureFormat, quality }: { captureFormat: CaptureFormat, quality: number }) {
-  if (captureFormat === 'jpeg') return ['-q:v', String(getFffmpegJpegQuality(quality))];
+  if (captureFormat === 'jpeg') return ['-q:v', String(getFfmpegJpegQuality(quality))];
   if (captureFormat === 'webp') return ['-q:v', String(Math.max(0, Math.min(100, Math.round(quality * 100))))];
   return [];
 }
@@ -459,16 +473,17 @@ export async function captureFrames({ from, to, videoPath, outPathTemplate, qual
     ...(to != null ? ['-t', String(Math.max(0, to - from))] : []),
     ...getQualityOpts({ captureFormat, quality }),
     // only apply filter for non-markers
-    ...(filter != null && to != null
+    ...(to == null
       ? [
-        '-vf', filter,
-        // https://superuser.com/questions/1336285/use-ffmpeg-for-thumbnail-selections
-        ...(framePts ? ['-frame_pts', '1'] : []),
-        '-vsync', '0', // else we get a ton of duplicates (thumbnail filter)
-      ]
-      : [
         '-frames:v', '1', // for markers, just capture 1 frame
-      ]
+      ] : (
+        // for segments (non markers), apply filter (but only if there is one)
+        filter != null ? [
+          '-vf', filter,
+          // https://superuser.com/questions/1336285/use-ffmpeg-for-thumbnail-selections
+          ...(framePts ? ['-frame_pts', '1'] : []),
+          '-vsync', '0', // else we get a ton of duplicates (thumbnail filter)
+        ] : [])
     ),
     ...getCodecOpts(captureFormat),
     '-f', 'image2',
@@ -491,7 +506,7 @@ export async function captureFrames({ from, to, videoPath, outPathTemplate, qual
 export async function captureFrame({ timestamp, videoPath, outPath, quality }: {
   timestamp: number, videoPath: string, outPath: string, quality: number,
 }) {
-  const ffmpegQuality = getFffmpegJpegQuality(quality);
+  const ffmpegQuality = getFfmpegJpegQuality(quality);
   const args = [
     '-ss', String(timestamp),
     '-i', videoPath,
@@ -543,17 +558,42 @@ export function readOneJpegFrame({ path, seekTo, videoStreamIndex }: { path: str
 const enableLog = false;
 const encode = true;
 
-export function createMediaSourceProcess({ path, videoStreamIndex, audioStreamIndex, seekTo, size, fps }: {
-  path: string, videoStreamIndex?: number | undefined, audioStreamIndex?: number | undefined, seekTo: number, size?: number | undefined, fps?: number | undefined,
+export function createMediaSourceProcess({ path, videoStreamIndex, audioStreamIndexes, seekTo, size, fps }: {
+  path: string,
+  videoStreamIndex?: number | undefined,
+  audioStreamIndexes: number[],
+  seekTo: number,
+  size?: number | undefined,
+  fps?: number | undefined,
 }) {
-  function getVideoFilters() {
-    if (videoStreamIndex == null) return [];
+  function getFilters() {
+    const graph: string[] = [];
 
-    const filters: string[] = [];
-    if (fps != null) filters.push(`fps=${fps}`);
-    if (size != null) filters.push(`scale=${size}:${size}:flags=lanczos:force_original_aspect_ratio=decrease`);
-    if (filters.length === 0) return [];
-    return ['-vf', filters.join(',')];
+    if (videoStreamIndex != null) {
+      const videoFilters: string[] = [];
+      if (fps != null) videoFilters.push(`fps=${fps}`);
+      if (size != null) videoFilters.push(`scale=${size}:${size}:flags=lanczos:force_original_aspect_ratio=decrease:force_divisible_by=2`);
+      const videoFiltersStr = videoFilters.length > 0 ? videoFilters.join(',') : 'null';
+      graph.push(`[0:${videoStreamIndex}]${videoFiltersStr}[video]`);
+    }
+
+    if (audioStreamIndexes.length > 0) {
+      if (audioStreamIndexes.length > 1) {
+        const resampledStr = audioStreamIndexes.map((i) => `[resampled${i}]`).join('');
+        const weightsStr = audioStreamIndexes.map(() => '1').join(' ');
+        graph.push(
+          // First resample because else we get the lowest sample rate
+          ...audioStreamIndexes.map((i) => `[0:${i}]aresample=44100[resampled${i}]`),
+          // now mix all audio channels together
+          `${resampledStr}amix=inputs=${audioStreamIndexes.length}:duration=longest:weights=${weightsStr}:normalize=0:dropout_transition=2[audio]`,
+        );
+      } else {
+        graph.push(`[0:${audioStreamIndexes[0]}]anull[audio]`);
+      }
+    }
+
+    if (graph.length === 0) return [];
+    return ['-filter_complex', graph.join(';')];
   }
 
   // https://stackoverflow.com/questions/16658873/how-to-minimize-the-delay-in-a-live-streaming-with-ffmpeg
@@ -568,29 +608,27 @@ export function createMediaSourceProcess({ path, videoStreamIndex, audioStreamIn
     // '-flags', 'low_delay', // this seems to ironically give a *higher* delay
     '-flush_packets', '1',
 
-    '-vsync', 'passthrough',
-
     '-ss', String(seekTo),
 
     '-noautorotate',
 
     '-i', path,
 
-    ...(videoStreamIndex != null ? ['-map', `0:${videoStreamIndex}`] : ['-vn']),
-
-    ...(audioStreamIndex != null ? ['-map', `0:${audioStreamIndex}`] : ['-an']),
+    '-fps_mode', 'passthrough',
 
     ...(encode ? [
-      ...(videoStreamIndex != null ? [
-        ...getVideoFilters(),
+      ...getFilters(),
 
+      ...(videoStreamIndex != null ? [
+        '-map', '[video]',
         '-pix_fmt', 'yuv420p', '-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', '-crf', '10',
         '-g', '1', // reduces latency and buffering
-      ] : []),
+      ] : ['-vn']),
 
-      ...(audioStreamIndex != null ? [
+      ...(audioStreamIndexes.length > 0 ? [
+        '-map', '[audio]',
         '-ac', '2', '-c:a', 'aac', '-b:a', '128k',
-      ] : []),
+      ] : ['-an']),
 
       // May alternatively use webm/vp8 https://stackoverflow.com/questions/24152810/encoding-ffmpeg-to-mpeg-dash-or-webm-with-keyframe-clusters-for-mediasource
     ] : [

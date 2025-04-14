@@ -4,22 +4,32 @@ import minBy from 'lodash/minBy';
 import maxBy from 'lodash/maxBy';
 import invariant from 'tiny-invariant';
 
-import { PlaybackMode, SegmentBase, SegmentTags, StateSegment } from './types';
+import { PlaybackMode, SegmentBase, SegmentTags, SegmentToExport, StateSegment } from './types';
 
 
 export const isDurationValid = (duration?: number): duration is number => duration != null && Number.isFinite(duration) && duration > 0;
 
-export const createSegment = (props?: { start?: number | undefined, end?: number | undefined, name?: string | undefined, tags?: unknown | undefined }): Omit<StateSegment, 'segColorIndex'> => ({
+export const createSegment = (props?: {
+  start?: number | undefined,
+  end?: number | undefined,
+  name?: string | undefined,
+  tags?: unknown | undefined,
+  initial?: true,
+  selected?: boolean,
+}): Omit<StateSegment, 'segColorIndex'> => ({
   start: props?.start ?? 0,
   end: props?.end,
   name: props?.name || '',
   segId: nanoid(),
+  selected: props?.selected ?? true,
 
   // `tags` is an optional object (key-value). Values must always be string
   // See https://github.com/mifi/lossless-cut/issues/879
   tags: props?.tags != null && typeof props.tags === 'object'
     ? Object.fromEntries(Object.entries(props.tags).map(([key, value]) => [key, String(value)]))
     : undefined,
+
+  ...(props?.initial && { initial: true }),
 });
 
 export const addSegmentColorIndex = (segment: Omit<StateSegment, 'segColorIndex'>, segColorIndex: number): StateSegment => ({
@@ -27,11 +37,10 @@ export const addSegmentColorIndex = (segment: Omit<StateSegment, 'segColorIndex'
   segColorIndex,
 });
 
-export const getCleanCutSegments = (cs: Pick<StateSegment, 'start' | 'end' | 'name' | 'tags'>[]) => cs.map((seg) => ({
-  start: seg.start,
-  end: seg.end,
-  name: seg.name,
-  tags: seg.tags,
+export const mapSaveableSegments = (segments: StateSegment[]) => segments.map(({
+  start, end, name, tags, selected,
+}) => ({
+  start, end, name, tags, selected,
 }));
 
 // in the past we had non-string tags
@@ -78,31 +87,8 @@ export function partitionIntoOverlappingRanges<T extends SegmentBase>(array: T[]
   return ret.filter((group) => group.length > 1).map((group) => sortBy(group, (seg) => seg.start));
 }
 
-export function combineOverlappingSegments<T extends SegmentBase>(existingSegments: T[]) {
-  const partitionedSegments = partitionIntoOverlappingRanges(existingSegments);
-
-  return existingSegments.flatMap((existingSegment) => {
-    const partOfPartition = partitionedSegments.find((partition) => partition.includes(existingSegment));
-    if (partOfPartition == null) {
-      return [existingSegment]; // this is not an overlapping segment, pass it through
-    }
-
-    const index = partOfPartition.indexOf(existingSegment);
-    // The first segment is the one with the lowest "start" value, so we use its start value
-    if (index === 0) {
-      return [{
-        ...existingSegment,
-        // but use the segment with the highest "end" value as the end value.
-        end: sortBy(partOfPartition, (segment) => segment.end)[partOfPartition.length - 1]!.end,
-      }];
-    }
-
-    return []; // then remove all other segments in this partition group
-  });
-}
-
-export function combineSelectedSegments({ existingSegments, isSegmentSelected }: { existingSegments: StateSegment[], isSegmentSelected: (seg: StateSegment) => boolean }) {
-  const selectedSegments = existingSegments.filter((segment) => isSegmentSelected(segment));
+export function combineSelectedSegments(existingSegments: StateSegment[]) {
+  const selectedSegments = existingSegments.filter((segment) => segment.selected);
   const firstSegment = minBy(selectedSegments, (seg) => seg.start);
   const lastSegment = maxBy(selectedSegments, (seg) => seg.end ?? seg.start);
 
@@ -116,12 +102,49 @@ export function combineSelectedSegments({ existingSegments, isSegmentSelected }:
       }];
     }
 
-    if (isSegmentSelected(existingSegment)) {
+    if (existingSegment.selected) {
       return []; // remove other selected segments
     }
 
+    // pass through non selected segments
     return [existingSegment];
   });
+}
+
+// Made by ChatGPT
+export function combineOverlappingSegments<T extends SegmentBase>(existingSegments: T[]): T[] {
+  if (existingSegments.length === 0) return [];
+
+  // Sort segments by start time
+  const sortedSegments = [...existingSegments];
+  sortedSegments.sort((a, b) => a.start - b.start);
+
+  let currentSegment = sortedSegments[0]!;
+
+  const combinedSegments: T[] = [];
+
+  for (let i = 1; i < sortedSegments.length; i += 1) {
+    const nextSegment = sortedSegments[i]!;
+
+    const currentSegmentEndOrStart = currentSegment.end ?? currentSegment.start;
+
+    // Check if the current segment overlaps or is adjacent to the next segment
+    if (currentSegmentEndOrStart >= nextSegment.start) {
+      currentSegment = {
+        ...currentSegment,
+        end: Math.max(currentSegmentEndOrStart, nextSegment.end ?? nextSegment.start),
+      };
+    } else {
+      // Push the current segment to the combined list and move to the next segment
+      combinedSegments.push(currentSegment);
+      currentSegment = nextSegment;
+    }
+  }
+
+  // Push the last segment
+  combinedSegments.push(currentSegment);
+
+  return combinedSegments;
 }
 
 export function hasAnySegmentOverlap(sortedSegments: { start: number, end: number }[]) {
@@ -132,15 +155,22 @@ export function hasAnySegmentOverlap(sortedSegments: { start: number, end: numbe
 }
 
 // eslint-disable-next-line space-before-function-paren
-export function invertSegments(sortedCutSegments: ({ start: number, end: number, segId?: string | undefined })[], includeFirstSegment: boolean, includeLastSegment: boolean, duration?: number) {
-  if (sortedCutSegments.length === 0) return [];
+export function invertSegments(
+  sortedSegmentsIn: ({ start: number, end?: number | undefined, segId?: string | undefined, name?: string | undefined })[],
+  includeFirstSegment: boolean,
+  includeLastSegment: boolean,
+  duration?: number,
+) {
+  const sortedSegments = sortedSegmentsIn.map((seg) => ({ ...seg, end: seg.end ?? seg.start }));
 
-  if (hasAnySegmentOverlap(sortedCutSegments)) return [];
+  if (sortedSegments.length === 0) return [];
 
-  const ret: { start: number, end?: number | undefined, segId?: string | undefined }[] = [];
+  if (hasAnySegmentOverlap(sortedSegments)) return [];
+
+  const ret: { start: number, end?: number | undefined, segId?: string | undefined, name?: string | undefined }[] = [];
 
   if (includeFirstSegment) {
-    const firstSeg = sortedCutSegments[0]!;
+    const firstSeg = sortedSegments[0]!;
     if (firstSeg.start > 0) {
       ret.push({
         start: 0,
@@ -150,26 +180,26 @@ export function invertSegments(sortedCutSegments: ({ start: number, end: number,
     }
   }
 
-  sortedCutSegments.forEach((cutSegment, i) => {
+  sortedSegments.forEach((segment, i) => {
     if (i === 0) return;
-    const previousSeg = sortedCutSegments[i - 1]!;
-    const inverted: typeof sortedCutSegments[number] = {
+    const previousSeg = sortedSegments[i - 1]!;
+    ret.push({
       start: previousSeg.end,
-      end: cutSegment.start,
-    };
-    if (previousSeg.segId != null && cutSegment.segId != null) inverted.segId = `${previousSeg.segId}-${cutSegment.segId}`;
-    ret.push(inverted);
+      end: segment.start,
+      ...(previousSeg.segId != null && segment.segId != null && { segId: `${previousSeg.segId}-${segment.segId}` }),
+      ...(previousSeg.name != null && { name: previousSeg.name }),
+    });
   });
 
   if (includeLastSegment) {
-    const lastSeg = sortedCutSegments.at(-1)!;
+    const lastSeg = sortedSegments.at(-1)!;
     if (duration == null || (lastSeg.end != null && lastSeg.end < duration)) {
-      const inverted: typeof ret[number] = {
+      ret.push({
         start: lastSeg.end,
         end: duration,
-      };
-      if (lastSeg.segId != null) inverted.segId = `${lastSeg.segId}-end`;
-      ret.push(inverted);
+        ...(lastSeg.segId != null && { segId: `${lastSeg.segId}-end` }),
+        ...(lastSeg.name != null && { name: lastSeg.name }),
+      });
     }
   }
 
@@ -183,7 +213,8 @@ export function convertSegmentsToChapters(sortedSegments: { start: number, end: 
   if (sortedSegments.length === 0) return [];
   if (hasAnySegmentOverlap(sortedSegments)) throw new Error('Segments cannot overlap');
 
-  const invertedSegments = invertSegments(sortedSegments, true, false).map(({ end, ...seg }) => {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const invertedSegments = invertSegments(sortedSegments, true, false).map(({ end, name: _ignored, ...seg }) => {
     invariant(end != null); // to please typescript
     return { ...seg, end };
   });
@@ -262,4 +293,6 @@ export function makeDurationSegments(segmentDuration: number, fileDuration: numb
   return edl;
 }
 
-export const isInitialSegment = (segments: SegmentBase[]) => segments.length === 1 && segments[0]!.start === 0 && segments[0]!.end == null;
+export const isInitialSegment = (segments: StateSegment[]) => segments.length === 0 || (segments.length === 1 && segments[0]!.initial);
+
+export const getGuaranteedSegments = <T extends SegmentToExport>(segments: T[], fileDuration: number | undefined) => (segments.length > 0 ? segments : [{ start: 0, end: fileDuration ?? 0, name: '', originalIndex: 0 }]);
