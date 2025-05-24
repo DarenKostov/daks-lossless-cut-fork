@@ -1,3 +1,5 @@
+## This fork just reverses the zoom, thats all.
+
 <div align="center">
 	<br>
   <p><a href="https://mifi.no/losslesscut/"><img src="src/renderer/src/icon.svg" width="120" alt="LosslessCut" /></a></p>
