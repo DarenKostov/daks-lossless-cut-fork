@@ -16,6 +16,7 @@ import Checkbox from '../components/Checkbox';
 import { isWindows, showItemInFolder } from '../util';
 import { ParseTimecode } from '../types';
 import { FindKeyframeMode } from '../ffmpeg';
+import Action from '../components/Action';
 
 const remote = window.require('@electron/remote');
 const { dialog, shell } = remote;
@@ -24,7 +25,12 @@ const { downloadMediaUrl } = remote.require('./index.js');
 
 
 export async function promptTimecode({ initialValue, title, text, inputPlaceholder, parseTimecode, allowRelative = false }: {
-  initialValue?: string | undefined, title: string, text?: string | undefined, inputPlaceholder: string, parseTimecode: ParseTimecode, allowRelative?: boolean,
+  initialValue?: string | undefined,
+  title: string,
+  text?: string | undefined,
+  inputPlaceholder: string,
+  parseTimecode: ParseTimecode,
+  allowRelative?: boolean,
 }) {
   const { value } = await Swal.fire<string>({
     title,
@@ -48,9 +54,9 @@ export async function promptTimecode({ initialValue, title, text, inputPlacehold
     else if (value.startsWith('+')) relDirection = 1;
   }
 
-  const value2 = allowRelative ? value.replace(/^[+-]/, '') : value;
+  const withoutPrefix = allowRelative ? value.replace(/^[+-]/, '') : value;
 
-  const duration = parseTimecode(value2);
+  const duration = parseTimecode(withoutPrefix);
   // Invalid, try again
   if (duration === undefined) return promptTimecode({ initialValue: value, title, text, inputPlaceholder, parseTimecode, allowRelative });
 
@@ -136,12 +142,12 @@ export async function askForFileOpenAction(inputOptions: Record<string, string>)
 
         {Object.entries(inputOptions).map(([key, text]) => (
           <button type="button" key={key} onClick={() => onClick(key)} className="button-unstyled" style={{ display: 'block', marginBottom: '.5em' }}>
-            <ArrowRightIcon style={{ color: 'var(--gray10)' }} verticalAlign="middle" /> {text}
+            <ArrowRightIcon style={{ color: 'var(--gray-10)' }} verticalAlign="middle" /> {text}
           </button>
         ))}
 
         <button type="button" onClick={() => onClick()} className="button-unstyled" style={{ display: 'block', marginTop: '.5em' }}>
-          <ArrowRightIcon style={{ color: 'var(--red11)' }} /> {i18n.t('Cancel')}
+          <ArrowRightIcon style={{ color: 'var(--red-11)' }} /> {i18n.t('Cancel')}
         </button>
 
       </div>
@@ -202,10 +208,8 @@ async function askForNumSegments() {
   const { value } = await Swal.fire({
     input: 'number',
     inputAttributes: {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      min: 0 as any as string,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      max: maxSegments as any as string,
+      min: 0 as unknown as string,
+      max: maxSegments as unknown as string,
     },
     showCancelButton: true,
     inputValue: '2',
@@ -233,8 +237,8 @@ export async function createNumSegments(fileDuration: number) {
   return edl;
 }
 
-export async function askForSegmentDuration({ fileDuration, inputPlaceholder, parseTimecode }: {
-  fileDuration: number,
+export async function askForSegmentDuration({ totalDuration, inputPlaceholder, parseTimecode }: {
+  totalDuration: number,
   inputPlaceholder: string,
   parseTimecode: ParseTimecode,
 }) {
@@ -244,10 +248,10 @@ export async function askForSegmentDuration({ fileDuration, inputPlaceholder, pa
     inputValue: inputPlaceholder,
     text: i18n.t('Divide timeline into a number of segments with the specified length'),
     inputValidator: (v) => {
-      const duration = parseTimecode(v);
-      if (duration != null) {
-        const numSegments = Math.ceil(fileDuration / duration);
-        if (duration > 0 && duration < fileDuration && numSegments <= maxSegments) return null;
+      const segmentDuration = parseTimecode(v);
+      if (segmentDuration != null) {
+        const numSegments = Math.ceil(totalDuration / segmentDuration);
+        if (segmentDuration > 0 && segmentDuration < totalDuration && numSegments <= maxSegments) return null;
       }
       return i18n.t('Please input a valid duration. Example: {{example}}', { example: inputPlaceholder });
     },
@@ -378,18 +382,6 @@ export async function askForAlignSegments() {
   };
 }
 
-export async function askForMetadataKey({ title, text }: { title: string, text: string }) {
-  const { value } = await Swal.fire<string>({
-    title,
-    text,
-    input: 'text',
-    showCancelButton: true,
-    inputPlaceholder: 'key',
-    inputValidator: (v) => (v.includes('=') ? i18n.t('Invalid character(s) found in key') : null),
-  });
-  return value;
-}
-
 export async function confirmExtractAllStreamsDialog() {
   const { value } = await Swal.fire<string>({
     text: i18n.t('Please confirm that you want to extract all tracks as separate files'),
@@ -508,7 +500,7 @@ export async function createFixedByteSixedSegments({ fileDuration, fileSize }: {
 }
 
 
-export async function createRandomSegments(fileDuration: number) {
+export async function createRandomSegments(totalDuration: number) {
   const response = await askForSegmentsRandomDurationRange();
   if (response == null) return undefined;
 
@@ -517,8 +509,8 @@ export async function createRandomSegments(fileDuration: number) {
   const randomInRange = (min: number, max: number) => min + Math.random() * (max - min);
 
   const edl: { start: number, end: number }[] = [];
-  for (let start = randomInRange(gapMin, gapMax); start < fileDuration && edl.length < maxSegments; start += randomInRange(gapMin, gapMax)) {
-    const end = Math.min(fileDuration, start + randomInRange(durationMin, durationMax));
+  for (let start = randomInRange(gapMin, gapMax); start < totalDuration && edl.length < maxSegments; start += randomInRange(gapMin, gapMax)) {
+    const end = Math.min(totalDuration, start + randomInRange(durationMin, durationMax));
     edl.push({ start, end });
     start = end;
   }
@@ -612,15 +604,16 @@ export async function selectSegmentsByLabelDialog(currentName?: string | undefin
   return value;
 }
 
-export async function exprDialog({ inputValidator, examples, title, description, variables }: {
+export async function exprDialog({ inputValidator, examples, title, description, variables, inputValue }: {
   inputValidator: (v: string) => Promise<string | undefined>,
-  examples: Record<string, { name: string, code: string }>,
+  examples: { name: string, code: string }[],
   title: string,
   description: ReactNode,
-  variables: string[]
+  variables?: string[],
+  inputValue?: string | undefined,
 }) {
-  function addExample(type: string) {
-    Swal.getInput()!.value = examples[type]?.code ?? '';
+  function addExample(code: string) {
+    Swal.getInput()!.value = code;
   }
 
   const { value } = await ReactSwal.fire<string>({
@@ -634,17 +627,18 @@ export async function exprDialog({ inputValidator, examples, title, description,
           {description}
         </div>
 
-        <div style={{ marginBottom: '1em' }}><b>{i18n.t('Variables')}:</b> {variables.join(', ')}</div>
+        {variables && <div style={{ marginBottom: '1em' }}>{i18n.t('Variables')}: <span style={{ display: 'inline-flex', gap: '.5em' }}>{variables.map((v) => <code key={v} className="highlighted">{v}</code>)}</span></div>}
 
         <div><b>{i18n.t('Examples')}:</b></div>
 
-        {Object.entries(examples).map(([key, { name }]) => (
-          <button key={key} type="button" onClick={() => addExample(key)} className="link-button" style={{ display: 'block', marginBottom: '.1em' }}>
+        {examples.map(({ name, code }) => (
+          <button key={code} type="button" onClick={() => addExample(code)} className="link-button" style={{ display: 'block', marginBottom: '.1em' }}>
             {name}
           </button>
         ))}
       </div>
     ),
+    inputValue,
     inputPlaceholder: i18n.t('Enter JavaScript expression'),
     inputValidator,
   });
@@ -654,33 +648,53 @@ export async function exprDialog({ inputValidator, examples, title, description,
 export async function selectSegmentsByExprDialog(inputValidator: (v: string) => Promise<string | undefined>) {
   return exprDialog({
     inputValidator,
-    examples: {
-      duration: { name: i18n.t('Segment duration less than 5 seconds'), code: 'segment.duration < 5' },
-      start: { name: i18n.t('Segment starts after 01:00'), code: 'segment.start > 60' },
-      label: { name: i18n.t('Segment label (exact)'), code: "segment.label === 'My label'" },
-      regexp: { name: i18n.t('Segment label (regexp)'), code: '/^My label/.test(segment.label)' },
-      tag: { name: i18n.t('Segment tag value'), code: "segment.tags.myTag === 'tag value'" },
-      markers: { name: i18n.t('Markers'), code: 'segment.end == null' },
-    },
+    examples: [
+      { name: i18n.t('Segment duration less than 5 seconds'), code: 'segment.duration < 5' },
+      { name: i18n.t('Segment starts after 01:00'), code: 'segment.start > 60' },
+      { name: i18n.t('Segment label (exact)'), code: "segment.label === 'My label'" },
+      { name: i18n.t('Segment label (regexp)'), code: '/^My label/.test(segment.label)' },
+      { name: i18n.t('Segment tag value'), code: "segment.tags.myTag === 'tag value'" },
+      { name: i18n.t('Markers'), code: 'segment.end == null' },
+    ],
     title: i18n.t('Select segments by expression'),
     description: <Trans>Enter a JavaScript expression which will be evaluated for each segment. Segments for which the expression evaluates to &quot;true&quot; will be selected. <button type="button" className="link-button" onClick={() => shell.openExternal('https://github.com/mifi/lossless-cut/blob/master/expressions.md')}>View available syntax.</button></Trans>,
     variables: ['segment.index', 'segment.label', 'segment.start', 'segment.end', 'segment.duration', 'segment.tags.*'],
   });
 }
 
+export async function filterEnabledStreamsDialog({ validator, value }: {
+  validator: (v: string) => Promise<string | undefined>,
+  value: string | undefined,
+}) {
+  return exprDialog({
+    inputValidator: validator,
+    examples: [
+      { name: i18n.t('Audio tracks'), code: "track.codec_type === 'audio'" },
+      { name: i18n.t('Video tracks'), code: "track.codec_type === 'video'" },
+      { name: i18n.t('English language tracks'), code: "track.tags?.language === 'eng'" },
+      { name: i18n.t('Tracks with at least 720p video'), code: 'track.height >= 720' },
+      { name: i18n.t('Tracks with H264 codec'), code: "track.codec_name === 'h264'" },
+      { name: i18n.t('1st, 2nd and 3rd track'), code: 'track.index >= 0 && track.index <= 2' },
+    ],
+    title: i18n.t('Toggle tracks by expression'),
+    description: <Trans>Enter a JavaScript filter expression which will be evaluated for each track of the current file. Tracks for which the expression evaluates to &quot;true&quot; will be selected or deselected. You may also the <Action name="toggleStripCurrentFilter" /> keyboard action to run this filter.</Trans>,
+    inputValue: value ?? '',
+  });
+}
+
 export async function mutateSegmentsByExprDialog(inputValidator: (v: string) => Promise<string | undefined>) {
   return exprDialog({
     inputValidator,
-    examples: {
-      expand: { name: i18n.t('Expand segments +5 sec'), code: '{ start: segment.start - 5, end: segment.end + 5 }' },
-      shrink: { name: i18n.t('Shrink segments -5 sec'), code: '{ start: segment.start + 5, end: segment.end - 5 }' },
-      center: { name: i18n.t('Center segments around start time'), code: '{ start: segment.start - 5, end: segment.start + 5 }' },
+    examples: [
+      { name: i18n.t('Expand segments +5 sec'), code: '{ start: segment.start - 5, end: segment.end + 5 }' },
+      { name: i18n.t('Shrink segments -5 sec'), code: '{ start: segment.start + 5, end: segment.end - 5 }' },
+      { name: i18n.t('Center segments around start time'), code: '{ start: segment.start - 5, end: segment.start + 5 }' },
       // eslint-disable-next-line no-template-curly-in-string
-      addNumToLabel: { name: i18n.t('Add number suffix to label'), code: '{ label: `${segment.label} ${segment.index + 1}` }' },
-      tagEven: { name: i18n.t('Add a tag to every even segment'), code: '{ tags: (segment.index + 1) % 2 === 0 ? { ...segment.tags, even: \'true\' } : segment.tags }' },
-      segmentsToMarkers: { name: i18n.t('Convert segments to markers'), code: '{ end: undefined }' },
-      markersToSegments: { name: i18n.t('Convert markers to segments'), code: '{ ...(segment.end == null && { end: segment.start + 5 }) }' },
-    },
+      { name: i18n.t('Add number suffix to label'), code: '{ label: `${segment.label} ${segment.index + 1}` }' },
+      { name: i18n.t('Add a tag to every even segment'), code: '{ tags: (segment.index + 1) % 2 === 0 ? { ...segment.tags, even: \'true\' } : segment.tags }' },
+      { name: i18n.t('Convert segments to markers'), code: '{ end: undefined }' },
+      { name: i18n.t('Convert markers to segments'), code: '{ ...(segment.end == null && { end: segment.start + 5 }) }' },
+    ],
     title: i18n.t('Edit segments by expression'),
     description: <Trans>Enter a JavaScript expression which will be evaluated for each selected segment. Returned properties will be edited. <button type="button" className="link-button" onClick={() => shell.openExternal('https://github.com/mifi/lossless-cut/blob/master/expressions.md')}>View available syntax.</button></Trans>,
     variables: ['segment.index', 'segment.label', 'segment.start', 'segment.end', 'segment.tags.*'],
@@ -698,6 +712,7 @@ export function showJson5Dialog({ title, json, darkMode }: { title: string, json
     showCloseButton: true,
     title,
     html,
+    width: '50em',
   });
 }
 
@@ -729,10 +744,10 @@ const ListItem = ({ icon: Icon, iconColor, children, style }: { icon: IconCompon
 );
 
 const Notices = ({ notices }: { notices: string[] }) => notices.map((msg) => (
-  <ListItem key={msg} icon={InfoSignIcon} iconColor="var(--blue9)">{msg}</ListItem>
+  <ListItem key={msg} icon={InfoSignIcon} iconColor="var(--blue-9)">{msg}</ListItem>
 ));
 const Warnings = ({ warnings }: { warnings: string[] }) => warnings.map((msg) => (
-  <ListItem key={msg} icon={WarningSignIcon} iconColor="var(--orange8)">{msg}</ListItem>
+  <ListItem key={msg} icon={WarningSignIcon} iconColor="var(--orange-8)">{msg}</ListItem>
 ));
 const OutputIncorrectSeeHelpMenu = () => (
   <ListItem icon={HelpIcon}>{i18n.t('If output does not look right, see the Help menu.')}</ListItem>
@@ -742,7 +757,7 @@ export async function openExportFinishedToast({ filePath, warnings, notices }: {
   const hasWarnings = warnings.length > 0;
   const html = (
     <UnorderedList>
-      <ListItem icon={TickCircleIcon} iconColor={hasWarnings ? 'var(--orange8)' : 'var(--green11)'} style={{ fontWeight: 'bold' }}>{hasWarnings ? i18n.t('Export finished with warning(s)', { count: warnings.length }) : i18n.t('Export is done!')}</ListItem>
+      <ListItem icon={TickCircleIcon} iconColor={hasWarnings ? 'var(--orange-8)' : 'var(--green-11)'} style={{ fontWeight: 'bold' }}>{hasWarnings ? i18n.t('Export finished with warning(s)', { count: warnings.length }) : i18n.t('Export is done!')}</ListItem>
       <ListItem icon={InfoSignIcon}>{i18n.t('Please test the output file in your desired player/editor before you delete the source file.')}</ListItem>
       <OutputIncorrectSeeHelpMenu />
       <Notices notices={notices} />

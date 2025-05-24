@@ -138,6 +138,12 @@ export default ({ app, mainWindow, newVersion, isStoreBuild }: {
                 mainWindow.webContents.send('importEdlFile', 'dv-analyzer-summary-txt');
               },
             },
+            {
+              label: esc(t('OpenTimelineIO')),
+              click() {
+                mainWindow.webContents.send('importEdlFile', 'otio');
+              },
+            },
           ],
         },
         {
@@ -356,6 +362,10 @@ export default ({ app, mainWindow, newVersion, isStoreBuild }: {
     {
       label: esc(t('View')),
       submenu: [
+        ...(process.platform === 'win32' ? [
+          { role: 'minimize' as const, label: esc(t('Minimize')) },
+          { role: 'zoom' as const, label: esc(t('Maximize')) },
+        ] : []),
         { role: 'togglefullscreen', label: esc(t('Toggle Full Screen')) },
         { role: 'resetZoom', label: esc(t('Reset font size')) },
         { role: 'zoomIn', label: esc(t('Increase font size')) },
@@ -364,13 +374,9 @@ export default ({ app, mainWindow, newVersion, isStoreBuild }: {
     },
 
     // On Windows the windowMenu has a close Ctrl+W which clashes with File->Close shortcut
-    ...(process.platform === 'darwin'
-      ? [{ role: 'windowMenu' as const, label: esc(t('Window')) }]
-      : [{
-        label: esc(t('Window')),
-        submenu: [{ role: 'minimize' as const, label: esc(t('Minimize')) }],
-      }]
-    ),
+    // Also, Windows apps don't normally have a Window menu.
+    // https://github.com/mifi/lossless-cut/discussions/2409
+    ...(process.platform === 'darwin' ? [{ role: 'windowMenu' as const, label: esc(t('Window')) }] : []),
 
     {
       label: esc(t('Tools')),

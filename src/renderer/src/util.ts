@@ -5,6 +5,7 @@ import prettyBytes from 'pretty-bytes';
 import sortBy from 'lodash/sortBy';
 import pRetry, { Options } from 'p-retry';
 import { ExecaError } from 'execa';
+import confetti from 'canvas-confetti';
 
 import isDev from './isDev';
 import Swal, { errorToast, toast } from './swal';
@@ -133,10 +134,18 @@ export const utimesWithRetry = async (path: string, atime: number, mtime: number
 
 export const getFrameDuration = (fps?: number) => 1 / (fps ?? 30);
 
-export async function transferTimestamps({ inPath, outPath, cutFrom = 0, cutTo = 0, duration = 0, treatInputFileModifiedTimeAsStart = true, treatOutputFileModifiedTimeAsStart }: {
-  inPath: string, outPath: string, cutFrom?: number | undefined, cutTo?: number | undefined, duration?: number | undefined, treatInputFileModifiedTimeAsStart?: boolean | null | undefined, treatOutputFileModifiedTimeAsStart: boolean | null | undefined
+export async function transferTimestamps({ inPath, outPath, cutFrom = 0, cutTo: cutToIn, duration = 0, treatInputFileModifiedTimeAsStart, treatOutputFileModifiedTimeAsStart }: {
+  inPath: string,
+  outPath: string,
+  cutFrom?: number | undefined,
+  cutTo?: number | undefined,
+  duration: number | undefined,
+  treatInputFileModifiedTimeAsStart: boolean,
+  treatOutputFileModifiedTimeAsStart: boolean | null | undefined,
 }) {
-  if (treatOutputFileModifiedTimeAsStart == null) return; // null means disabled;
+  if (treatOutputFileModifiedTimeAsStart == null) return; // null means time transfer is disabled (use current time);
+
+  const cutTo = cutToIn ?? duration;
 
   // see https://github.com/mifi/lossless-cut/issues/1017#issuecomment-1049097115
   function calculateTime(fileTime: number) {
@@ -507,7 +516,7 @@ export async function readDirRecursively(dirPath: string) {
 
 export function getImportProjectType(filePath: string) {
   if (filePath.endsWith('Summary.txt')) return 'dv-analyzer-summary-txt';
-  const edlFormatForExtension = { csv: 'csv', pbf: 'pbf', edl: 'edl', cue: 'cue', xml: 'xmeml', fcpxml: 'fcpxml' } as const;
+  const edlFormatForExtension = { csv: 'csv', pbf: 'pbf', edl: 'edl', cue: 'cue', xml: 'xmeml', fcpxml: 'fcpxml', otio: 'otio' } as const;
   const matchingExt = Object.keys(edlFormatForExtension).find((ext) => filePath.toLowerCase().endsWith(`.${ext}`)) as keyof typeof edlFormatForExtension | undefined;
   if (!matchingExt) return undefined;
   return edlFormatForExtension[matchingExt];
@@ -519,3 +528,20 @@ export const calcShouldShowKeyframes = (zoomedDuration: number | undefined) => (
 export const mediaSourceQualities = ['HD', 'SD', 'OG']; // OG is original
 
 export const splitKeyboardKeys = (keys: string) => keys.split('+');
+
+export function shootConfetti(options?: confetti.Options) {
+  confetti({
+    particleCount: 30,
+    angle: 110,
+    startVelocity: 30,
+    spread: 40,
+    ticks: 25,
+    disableForReducedMotion: true,
+    origin: {
+      x: 0.98,
+      // since they fall down, start a bit higher than random
+      y: 1.03,
+    },
+    ...options,
+  });
+}
