@@ -3,7 +3,7 @@ import i18n from 'i18next';
 import invariant from 'tiny-invariant';
 import { ZodError } from 'zod';
 
-import { parseSrtToSegments, formatSrt, parseCuesheet, parseXmeml, parseFcpXml, parseCsv, parseCutlist, parsePbf, parseEdl, formatCsvHuman, formatTsv, formatCsvFrames, formatCsvSeconds, parseCsvTime, getFrameValParser, parseDvAnalyzerSummaryTxt, parseOtio } from './edlFormats';
+import { parseSrtToSegments, formatSrt, parseCuesheet, parseXmeml, parseFcpXml, parseCsv, parseCutlist, parsePbf, parseEdl, formatCsvHuman, formatTsvHuman, formatCsvFrames, formatCsvSeconds, parseCsvTime, getFrameValParser, parseDvAnalyzerSummaryTxt, parseOtio } from './edlFormats';
 import { askForYouTubeInput, showOpenDialog } from './dialogs';
 import { getOutPath } from './util';
 import { EdlExportType, EdlFileType, EdlImportType, GetFrameCount, LlcProject, llcProjectV1Schema, llcProjectV2Schema, SegmentBase, StateSegment } from './types';
@@ -17,16 +17,16 @@ const { basename } = window.require('path');
 const { dialog } = window.require('@electron/remote');
 
 
-async function loadCsvSeconds(path: string) {
-  return parseCsv(await readFile(path, 'utf8'), parseCsvTime);
-}
+// When readFile is used with 'utf8', ef bb bf is its UTF-8 representation of BOM. As BOM is considered white-space, it can be stripped by .trim(). Node.js does not strip BOM, it is a userland task.
+// https://github.com/nodejs/node/issues/20649#issuecomment-388016410
+const trimBom = (text: string) => text.trim();
 
-async function loadCsvFrames(path: string, fps: number) {
-  return parseCsv(await readFile(path, 'utf8'), getFrameValParser(fps));
+async function loadCsv(path: string, parseTimeFn: (a: string) => number | undefined) {
+  return parseCsv(trimBom(await readFile(path, 'utf8')), parseTimeFn);
 }
 
 async function loadCutlistSeconds(path: string) {
-  return parseCutlist(await readFile(path, 'utf8'));
+  return parseCutlist(trimBom(await readFile(path, 'utf8')));
 }
 
 async function loadXmeml(path: string) {
@@ -38,7 +38,7 @@ async function loadFcpXml(path: string) {
 }
 
 async function loadDvAnalyzerSummaryTxt(path: string) {
-  return parseDvAnalyzerSummaryTxt(await readFile(path, 'utf8'));
+  return parseDvAnalyzerSummaryTxt(trimBom(await readFile(path, 'utf8')));
 }
 
 async function loadPbf(path: string) {
@@ -46,7 +46,7 @@ async function loadPbf(path: string) {
 }
 
 async function loadEdl(path: string, fps: number) {
-  return parseEdl(await readFile(path, 'utf8'), fps);
+  return parseEdl(trimBom(await readFile(path, 'utf8')), fps);
 }
 
 async function loadCue(path: string) {
@@ -58,11 +58,11 @@ async function loadSrt(path: string) {
 }
 
 export async function saveCsv(path: string, cutSegments: SegmentBase[]) {
-  await writeFile(path, await formatCsvSeconds(cutSegments));
+  await writeFile(path, formatCsvSeconds(cutSegments));
 }
 
 export async function saveCsvHuman(path: string, cutSegments: SegmentBase[]) {
-  await writeFile(path, await formatCsvHuman(cutSegments));
+  await writeFile(path, formatCsvHuman(cutSegments));
 }
 
 export async function saveCsvFrames({ path, cutSegments, getFrameCount }: {
@@ -70,25 +70,25 @@ export async function saveCsvFrames({ path, cutSegments, getFrameCount }: {
   cutSegments: SegmentBase[],
   getFrameCount: GetFrameCount,
 }) {
-  await writeFile(path, await formatCsvFrames({ cutSegments, getFrameCount }));
+  await writeFile(path, formatCsvFrames({ cutSegments, getFrameCount }));
 }
 
 export async function saveTsv(path: string, cutSegments: SegmentBase[]) {
-  await writeFile(path, await formatTsv(cutSegments));
+  await writeFile(path, formatTsvHuman(cutSegments));
 }
 
 export async function saveSrt(path: string, cutSegments: SegmentBase[]) {
   await writeFile(path, formatSrt(cutSegments));
 }
 
-export async function saveLlcProject({ savePath, filePath, cutSegments }: {
+export async function saveLlcProject({ savePath, mediaFilePath, cutSegments }: {
   savePath: string,
-  filePath: string,
+  mediaFilePath: string,
   cutSegments: StateSegment[],
 }) {
   const projectData: LlcProject = {
     version: 2,
-    mediaFileName: basename(filePath),
+    mediaFileName: basename(mediaFilePath),
     cutSegments: mapSaveableSegments(cutSegments),
   };
   await writeFile(savePath, JSON5.stringify(projectData, null, 2));
@@ -134,10 +134,10 @@ export async function readEdlFile({ type, path, fps }: {
   path: string,
   fps: number | undefined,
 }) {
-  if (type === 'csv') return loadCsvSeconds(path);
+  if (type === 'csv') return loadCsv(path, parseCsvTime);
   if (type === 'csv-frames' || type === 'edl') {
     invariant(fps != null, 'The loaded media has an unknown framerate');
-    if (type === 'csv-frames') return loadCsvFrames(path, fps);
+    if (type === 'csv-frames') return loadCsv(path, getFrameValParser(fps));
     if (type === 'edl') return loadEdl(path, fps);
   }
   if (type === 'cutlist') return loadCutlistSeconds(path);
@@ -222,6 +222,6 @@ export async function exportEdlFile({ type, cutSegments, customOutDir, filePath,
   else if (type === 'tsv-human') await saveTsv(savePath, cutSegments);
   else if (type === 'csv-human') await saveCsvHuman(savePath, cutSegments);
   else if (type === 'csv-frames') await saveCsvFrames({ path: savePath, cutSegments, getFrameCount });
-  else if (type === 'llc') await saveLlcProject({ savePath, filePath, cutSegments });
+  else if (type === 'llc') await saveLlcProject({ savePath, mediaFilePath: filePath, cutSegments });
   else if (type === 'srt') await saveSrt(savePath, cutSegments);
 }

@@ -233,6 +233,10 @@ const KeyboardShortcuts = memo(({
         name: t('Convert to supported format'),
         category: playbackCategory,
       },
+      makeCursorTimeZero: {
+        name: t('Make cursor time zero'),
+        category: playbackCategory,
+      },
 
       // selectivePlaybackCategory
       togglePlayOnlyCurrentSegment: {
@@ -670,6 +674,10 @@ const KeyboardShortcuts = memo(({
       },
       toggleShowKeyframes: {
         name: t('Show keyframes'),
+        category: otherCategory,
+      },
+      readAllKeyframes: {
+        name: t('Read all keyframes'),
         category: otherCategory,
       },
       toggleFullscreenVideo: {
