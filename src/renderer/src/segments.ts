@@ -4,7 +4,7 @@ import minBy from 'lodash/minBy';
 import maxBy from 'lodash/maxBy';
 import invariant from 'tiny-invariant';
 
-import { DefiniteSegmentBase, PlaybackMode, SegmentBase, SegmentTags, SegmentToExport, StateSegment } from './types';
+import type { DefiniteSegmentBase, PlaybackMode, SegmentBase, SegmentTags, SegmentToExport, StateSegment } from './types';
 
 
 export const isDurationValid = (duration?: number): duration is number => duration != null && Number.isFinite(duration) && duration > 0;
@@ -53,7 +53,7 @@ export const sortSegments = <T extends { start: number }>(segments: T[]) => sort
 // https://stackoverflow.com/a/30472982/6519037
 export function partitionIntoOverlappingRanges<T extends SegmentBase>(array: T[]) {
   const [firstItem] = array;
-  if (firstItem == null) throw new Error('No segments');
+  invariant(firstItem != null);
 
   const ret: T[][] = [
     [firstItem],
@@ -68,7 +68,7 @@ export function partitionIntoOverlappingRanges<T extends SegmentBase>(array: T[]
       if (getSegmentEnd(a) > getSegmentEnd(b)) return -1;
       return 0;
     });
-    if (array2[0] == null) throw new Error();
+    invariant(array2[0] != null);
     return getSegmentEnd(array2[0]);
   };
 
@@ -93,17 +93,18 @@ export function combineSelectedSegments(existingSegments: StateSegment[]) {
   const lastSegment = maxBy(selectedSegments, (seg) => seg.end ?? seg.start);
 
   return existingSegments.flatMap((existingSegment) => {
-    invariant(lastSegment != null);
-    if (existingSegment === firstSegment) {
-      return [{
-        ...firstSegment,
-        start: firstSegment.start,
-        end: lastSegment.end ?? lastSegment.start, // for markers use their start
-      }];
-    }
+    if (lastSegment != null) {
+      if (existingSegment === firstSegment) {
+        return [{
+          ...firstSegment,
+          start: firstSegment.start,
+          end: lastSegment.end ?? lastSegment.start, // for markers use their start
+        }];
+      }
 
-    if (existingSegment.selected) {
-      return []; // remove other selected segments
+      if (existingSegment.selected) {
+        return []; // remove other selected segments
+      }
     }
 
     // pass through non selected segments
@@ -256,6 +257,7 @@ export function getPlaybackAction({ playbackMode, currentTime, playingSegment }:
       break;
     }
 
+    case 'play-selected-segments':
     case 'loop-selected-segments': {
       if (currentTime >= playingSegment.end) {
         return { nextSegment: true };
@@ -285,7 +287,7 @@ export function makeDurationSegments(segmentDuration: number, totalDuration: num
   const edl: { start: number, end: number }[] = [];
   for (let start = 0; start < totalDuration; start += segmentDuration) {
     const end = start + segmentDuration;
-    edl.push({ start, end: end >= totalDuration ? totalDuration : end });
+    edl.push({ start, end: Math.min(end, totalDuration) });
   }
   return edl;
 }

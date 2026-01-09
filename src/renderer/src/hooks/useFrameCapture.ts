@@ -1,13 +1,13 @@
-import dataUriToBuffer from 'data-uri-to-buffer';
+import { dataUriToBuffer } from 'data-uri-to-buffer';
 import pMap from 'p-map';
 import { useCallback } from 'react';
 
 import { getSuffixedOutPath, getOutDir, transferTimestamps, getSuffixedFileName, getOutPath, escapeRegExp, fsOperationWithRetry } from '../util';
-import { getNumDigits } from '../segments';
+import { getNumDigits, isDurationValid } from '../segments';
 
 import * as ffmpeg from '../ffmpeg';
-import { FormatTimecode } from '../types';
-import { CaptureFormat } from '../../../../types';
+import type { FormatTimecode } from '../types';
+import type { CaptureFormat } from '../../../common/types';
 
 const mime = window.require('mime-types');
 const { rename, readdir, writeFile } = window.require('fs/promises');
@@ -25,11 +25,12 @@ function getFrameFromVideo(video: HTMLVideoElement, format: CaptureFormat, quali
   return dataUriToBuffer(dataUri);
 }
 
-export default ({ appendFfmpegCommandLog, formatTimecode, treatInputFileModifiedTimeAsStart, treatOutputFileModifiedTimeAsStart }: {
+export default ({ appendFfmpegCommandLog, formatTimecode, treatInputFileModifiedTimeAsStart, treatOutputFileModifiedTimeAsStart, fileDuration }: {
   appendFfmpegCommandLog: (args: string[]) => void,
   formatTimecode: FormatTimecode,
   treatInputFileModifiedTimeAsStart: boolean,
-  treatOutputFileModifiedTimeAsStart?: boolean | undefined | null,
+  treatOutputFileModifiedTimeAsStart: boolean | undefined | null,
+  fileDuration: number | undefined,
 }) => {
   const captureFramesRange = useCallback(async ({ customOutDir, filePath, fps, fromTime, toTime, estimatedMaxNumFiles, captureFormat, quality, filter, onProgress, outputTimestamps }: {
     customOutDir: string | undefined,
@@ -100,12 +101,12 @@ export default ({ appendFfmpegCommandLog, formatTimecode, treatInputFileModified
     const timecode = formatTimecode({ seconds: time, fileNameFriendly: true });
     const nameSuffix = `${timecode}.${captureFormat}`;
     const outPath = getSuffixedOutPath({ customOutDir, filePath, nameSuffix });
-    const args = await ffmpeg.captureFrame({ timestamp: time, videoPath: filePath, outPath, quality });
+    const args = await ffmpeg.captureFrameToFile({ timestamp: time, videoPath: filePath, outPath, quality });
     appendFfmpegCommandLog(args);
 
-    await transferTimestamps({ inPath: filePath, outPath, cutFrom: time, cutTo: time, duration: 0, treatInputFileModifiedTimeAsStart, treatOutputFileModifiedTimeAsStart });
+    await transferTimestamps({ inPath: filePath, outPath, cutFrom: time, cutTo: time, duration: isDurationValid(fileDuration) ? fileDuration : undefined, treatInputFileModifiedTimeAsStart, treatOutputFileModifiedTimeAsStart });
     return outPath;
-  }, [appendFfmpegCommandLog, formatTimecode, treatInputFileModifiedTimeAsStart, treatOutputFileModifiedTimeAsStart]);
+  }, [appendFfmpegCommandLog, fileDuration, formatTimecode, treatInputFileModifiedTimeAsStart, treatOutputFileModifiedTimeAsStart]);
 
   const captureFrameFromTag = useCallback(async ({ customOutDir, filePath, time, captureFormat, quality, video }: {
     customOutDir?: string | undefined,
@@ -115,21 +116,28 @@ export default ({ appendFfmpegCommandLog, formatTimecode, treatInputFileModified
     quality: number,
     video: HTMLVideoElement,
   }) => {
-    const buf = getFrameFromVideo(video, captureFormat, quality);
+    const dataUri = getFrameFromVideo(video, captureFormat, quality);
 
-    const ext = mime.extension(buf.type);
+    const ext = mime.extension(dataUri.type);
     const timecode = formatTimecode({ seconds: time, fileNameFriendly: true });
 
     const outPath = getSuffixedOutPath({ customOutDir, filePath, nameSuffix: `${timecode}.${ext}` });
-    await writeFile(outPath, buf);
+    await writeFile(outPath, new Uint8Array(dataUri.buffer));
 
-    await transferTimestamps({ inPath: filePath, outPath, cutFrom: time, cutTo: time, duration: 0, treatInputFileModifiedTimeAsStart, treatOutputFileModifiedTimeAsStart });
+    await transferTimestamps({ inPath: filePath, outPath, cutFrom: time, cutTo: time, duration: isDurationValid(fileDuration) ? fileDuration : undefined, treatInputFileModifiedTimeAsStart, treatOutputFileModifiedTimeAsStart });
     return outPath;
-  }, [formatTimecode, treatInputFileModifiedTimeAsStart, treatOutputFileModifiedTimeAsStart]);
+  }, [fileDuration, formatTimecode, treatInputFileModifiedTimeAsStart, treatOutputFileModifiedTimeAsStart]);
+
+  const captureFrameToClipboard = useCallback(async ({ filePath, time, quality }: {
+    filePath: string,
+    time: number,
+    quality: number,
+ }) => ffmpeg.captureFrameToClipboard({ timestamp: time, videoPath: filePath, quality }), []);
 
   return {
     captureFramesRange,
     captureFrameFromFfmpeg,
     captureFrameFromTag,
+    captureFrameToClipboard,
   };
 };

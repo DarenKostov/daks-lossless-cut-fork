@@ -1,8 +1,9 @@
+import type { BrowserWindow, MenuItem, MenuItemConstructorOptions } from 'electron';
 // eslint-disable-next-line import/no-extraneous-dependencies
-import electron, { BrowserWindow, MenuItem, MenuItemConstructorOptions } from 'electron';
+import electron from 'electron';
 import { t } from 'i18next';
 
-import { homepage, getReleaseUrl, licensesPage } from './constants.js';
+import { homepageUrl, getReleaseUrl, licensesUrl, thanksUrl, usageUrl, faqUrl, troubleshootingUrl, featureRequestUrl } from '../common/constants.js';
 import { logFilePath } from './logger.js';
 import { getConfigPath } from './configStore.js';
 
@@ -437,15 +438,15 @@ export default ({ app, mainWindow, newVersion, isStoreBuild }: {
       submenu: [
         {
           label: esc(t('How to use')),
-          click() { electron.shell.openExternal('https://mifi.no/losslesscut/usage'); },
+          click() { electron.shell.openExternal(usageUrl); },
         },
         {
           label: esc(t('FAQ')),
-          click() { electron.shell.openExternal('https://mifi.no/losslesscut/faq'); },
+          click() { electron.shell.openExternal(faqUrl); },
         },
         {
           label: esc(t('Troubleshooting')),
-          click() { electron.shell.openExternal('https://mifi.no/losslesscut/troubleshooting'); },
+          click() { electron.shell.openExternal(troubleshootingUrl); },
         },
         {
           label: esc(t('Keyboard & mouse shortcuts')),
@@ -455,7 +456,7 @@ export default ({ app, mainWindow, newVersion, isStoreBuild }: {
         },
         {
           label: esc(t('Learn More')),
-          click() { electron.shell.openExternal(homepage); },
+          click() { electron.shell.openExternal(homepageUrl); },
         },
         { type: 'separator' },
         {
@@ -464,11 +465,11 @@ export default ({ app, mainWindow, newVersion, isStoreBuild }: {
         },
         {
           label: esc(t('Feature request')),
-          click() { electron.shell.openExternal('https://github.com/mifi/lossless-cut/issues'); },
+          click() { electron.shell.openExternal(featureRequestUrl); },
         },
         ...(!isStoreBuild ? [{
           label: esc(`${t('Donate')} ❤️`),
-          click() { electron.shell.openExternal('https://mifi.no/thanks'); },
+          click() { electron.shell.openExternal(thanksUrl); },
         }] : []),
         { type: 'separator' },
         {
@@ -482,7 +483,7 @@ export default ({ app, mainWindow, newVersion, isStoreBuild }: {
         { type: 'separator' },
         {
           label: esc(t('Licenses')),
-          click() { electron.shell.openExternal(licensesPage); },
+          click() { electron.shell.openExternal(licensesUrl); },
         },
         ...(process.platform !== 'darwin' ? [{ role: 'about' as const, label: esc(t('About LosslessCut')) }] : []),
       ],

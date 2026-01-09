@@ -1,8 +1,9 @@
 import { FaTimes } from 'react-icons/fa';
-import { DetailedHTMLProps, ButtonHTMLAttributes } from 'react';
+import type { DetailedHTMLProps, ButtonHTMLAttributes } from 'react';
 
 import styles from './CloseButton.module.css';
 import i18n from '../i18n';
+
 
 export default function CloseButton({ type = 'button', ...props }: DetailedHTMLProps<ButtonHTMLAttributes<HTMLButtonElement>, HTMLButtonElement>) {
   return (

@@ -1,23 +1,25 @@
 import pMap from 'p-map';
 import sortBy from 'lodash/sortBy';
 import i18n from 'i18next';
-import Timecode, { FRAMERATE } from 'smpte-timecode';
+import type { FRAMERATE } from 'smpte-timecode';
+import Timecode from 'smpte-timecode';
 import minBy from 'lodash/minBy';
 import invariant from 'tiny-invariant';
 
 import { pcmAudioCodecs, isMov } from './util/streams';
 import { isExecaError } from './util';
 import { isDurationValid } from './segments';
-import { FFprobeChapter, FFprobeFormat, FFprobeProbeResult, FFprobeStream } from '../../../ffprobe';
+import type { FFprobeChapter, FFprobeFormat, FFprobeProbeResult, FFprobeStream } from '../../common/ffprobe';
 import { parseSrt, parseSrtToSegments } from './edlFormats';
-import { UnsupportedFileError } from '../errors';
+import { UnsupportedFileError, UserFacingError } from '../errors';
+import mainApi from './mainApi';
 
-const { ffmpeg, fileTypePromise } = window.require('@electron/remote').require('./index.js');
+const { ffmpeg } = window.require('@electron/remote').require('./index.js');
 
-const { renderWaveformPng, mapTimesToSegments, detectSceneChanges, captureFrames, captureFrame, getFfCommandLine, runFfmpegConcat, runFfmpegWithProgress, getDuration, abortFfmpegs, runFfmpeg, runFfprobe, getFfmpegPath, setCustomFfPath } = ffmpeg;
+const { renderWaveformPng, mapTimesToSegments, detectSceneChanges, captureFrames, captureFrameToFile, captureFrameToClipboard, getFfCommandLine, runFfmpegConcat, runFfmpegWithProgress, getDuration, abortFfmpegs, runFfmpeg, runFfprobe, getFfmpegPath, setCustomFfPath } = ffmpeg;
 
 
-export { renderWaveformPng, mapTimesToSegments, detectSceneChanges, captureFrames, captureFrame, getFfCommandLine, runFfmpegConcat, runFfmpegWithProgress, getDuration, abortFfmpegs, runFfmpeg, getFfmpegPath, setCustomFfPath };
+export { renderWaveformPng, mapTimesToSegments, detectSceneChanges, captureFrames, captureFrameToFile, captureFrameToClipboard, getFfCommandLine, runFfmpegConcat, runFfmpegWithProgress, getDuration, abortFfmpegs, runFfmpeg, getFfmpegPath, setCustomFfPath };
 
 
 export class RefuseOverwriteError extends Error {
@@ -86,7 +88,7 @@ export async function readFrames({ filePath, from, to, streamIndex }: {
 }
 
 export async function readFramesAroundTime({ filePath, streamIndex, aroundTime, window }: { filePath: string, streamIndex: number, aroundTime: number, window: number }) {
-  if (aroundTime == null) throw new Error('aroundTime was nullish');
+  invariant(aroundTime != null);
   const { from, to } = getIntervalAroundTime(aroundTime, window);
   return readFrames({ filePath, from, to, streamIndex });
 }
@@ -142,12 +144,12 @@ export function getSafeCutTime(frames: Frame[], cutTime: number, nextMode: boole
 
   let index: number;
 
-  if (frames.length < 2) throw new Error(i18n.t('Less than 2 frames found'));
+  if (frames.length < 2) throw new UserFacingError(i18n.t('Less than 2 frames found'));
 
   if (nextMode) {
     index = frames.findIndex((f) => f.keyframe && f.time >= cutTime - sigma);
-    if (index === -1) throw new Error(i18n.t('Failed to find next keyframe'));
-    if (index >= frames.length - 1) throw new Error(i18n.t('We are on the last frame'));
+    if (index === -1) throw new UserFacingError(i18n.t('Failed to find next keyframe'));
+    if (index >= frames.length - 1) throw new UserFacingError(i18n.t('We are on the last frame'));
     const { time } = frames[index]!;
     if (isCloseTo(time, cutTime)) {
       return undefined; // Already on keyframe, no need to modify cut time
@@ -163,8 +165,8 @@ export function getSafeCutTime(frames: Frame[], cutTime: number, nextMode: boole
   };
 
   index = findReverseIndex(frames, (f) => f.time <= cutTime + sigma);
-  if (index === -1) throw new Error(i18n.t('Failed to find any prev frame'));
-  if (index === 0) throw new Error(i18n.t('We are on the first frame'));
+  if (index === -1) throw new UserFacingError(i18n.t('Failed to find any prev frame'));
+  if (index === 0) throw new UserFacingError(i18n.t('We are on the first frame'));
 
   if (index === frames.length - 1) {
     // Last frame of video, no need to modify cut time
@@ -177,8 +179,8 @@ export function getSafeCutTime(frames: Frame[], cutTime: number, nextMode: boole
 
   // We are not on a frame before keyframe, look for preceding keyframe instead
   index = findReverseIndex(frames, (f) => f.keyframe && f.time <= cutTime + sigma);
-  if (index === -1) throw new Error(i18n.t('Failed to find any prev keyframe'));
-  if (index === 0) throw new Error(i18n.t('We are on the first keyframe'));
+  if (index === -1) throw new UserFacingError(i18n.t('Failed to find any prev keyframe'));
+  if (index === 0) throw new UserFacingError(i18n.t('We are on the first keyframe'));
 
   // Use frame before the found keyframe
   return frames[index - 1]!.time;
@@ -267,7 +269,7 @@ async function determineSourceFileFormat(ffprobeFormatsStr: string | undefined, 
   // We need to test mp3 first because ffprobe seems to report the wrong format sometimes https://github.com/mifi/lossless-cut/issues/2129
   if (firstFfprobeFormat === 'mp3') {
     // file-type detects it correctly
-    const fileTypeResponse = await (await fileTypePromise).fileTypeFromFile(filePath);
+    const fileTypeResponse = await mainApi.fileTypeFromFile(filePath);
     if (fileTypeResponse?.mime === 'audio/mpeg') {
       return 'mp2';
     }
@@ -286,7 +288,7 @@ async function determineSourceFileFormat(ffprobeFormatsStr: string | undefined, 
     return firstFfprobeFormat;
   }
 
-  const fileTypeResponse = await (await fileTypePromise).fileTypeFromFile(filePath);
+  const fileTypeResponse = await mainApi.fileTypeFromFile(filePath);
   if (fileTypeResponse == null) {
     console.warn('file-type failed to detect format, defaulting to first FFprobe detected format', ffprobeFormats);
     return firstFfprobeFormat;
@@ -344,7 +346,7 @@ export async function getDefaultOutFormat({ filePath, fileMeta: { format } }: { 
   return mapInputToOutputFormat(assumedFormat);
 }
 
-export async function readFileMeta(filePath: string) {
+export async function readFileFfprobeMeta(filePath: string) {
   try {
     const { stdout } = await runFfprobe([
       '-of', 'json', '-show_chapters', '-show_format', '-show_entries', 'stream', '-i', filePath, '-hide_banner',
@@ -360,16 +362,26 @@ export async function readFileMeta(filePath: string) {
       console.log('ffprobe stdout:', decoded ?? stdout);
       throw new Error('ffprobe returned malformed data');
     }
-    const { streams = [], format, chapters = [] } = parsedJson;
+    const { format, chapters = [] } = parsedJson;
     invariant(format != null);
+
+    const streams = (parsedJson.streams ?? []).map((s) => {
+      if (/DJI_[^/\\]+SRT$/.test(filePath)) {
+        return { ...s, guessedType: 'dji-gps-srt' as const };
+      }
+      return { ...s, guessedType: undefined };
+    });
     return { format, streams, chapters };
   } catch (err) {
-    if (isExecaError(err)) {
-      throw new UnsupportedFileError(err.message);
+    if (isExecaError(err) && err.code == null && err.exitCode != null) {
+      throw new UnsupportedFileError('Unsupported file', { cause: err });
     }
     throw err;
   }
 }
+
+export type FileFfprobeMeta = Awaited<ReturnType<typeof readFileFfprobeMeta>>;
+export type FileStream = FileFfprobeMeta['streams'][number];
 
 async function renderThumbnail(filePath: string, timestamp: number, signal: AbortSignal) {
   const args = [

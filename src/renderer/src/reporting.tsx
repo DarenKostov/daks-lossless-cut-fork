@@ -2,37 +2,44 @@ import i18n from 'i18next';
 import { Trans } from 'react-i18next';
 
 import CopyClipboardButton from './components/CopyClipboardButton';
-import { isStoreBuild, isMasBuild, isWindowsStoreBuild, isExecaError } from './util';
-import { ReactSwal } from './swal';
+import { isStoreBuild, isMasBuild, isWindowsStoreBuild, isExecaError, appVersion, appPath } from './util';
+import getSwal from './swal';
+import { discussionsUrl, githubUrl, publicBugReportUrl, supportEmail } from '../../common/constants';
 
 const electron = window.require('electron');
 
 const remote = window.require('@electron/remote');
 
-const { app } = remote;
-
 const { platform, arch } = remote.require('./index.js');
 
 
+// This cannot be a radix dialog, because it needs to be called even if the React tree is broken.
 // eslint-disable-next-line import/prefer-default-export
-export function openSendReportDialog(err: unknown | undefined, state?: unknown) {
+export function openSendReportDialog({ err, message, state }: {
+  err?: unknown | undefined,
+  message?: string,
+  state?: unknown,
+}) {
   const reportInstructions = isStoreBuild
     ? (
-      <p><Trans>Please send an email to <span className="link-button" role="button" onClick={() => electron.shell.openExternal('mailto:losslesscut@mifi.no')}>losslesscut@mifi.no</span> where you describe what you were doing.</Trans></p>
+      <p><Trans>Please send an email to <span className="link-button" role="button" onClick={() => electron.shell.openExternal(`mailto:${supportEmail}`)}>{supportEmail}</span> where you describe what you were doing.</Trans></p>
     ) : (
       <Trans>
         <p>
-          If you&apos;re having a problem or question about LosslessCut, please first check the links in the <b>Help</b> menu. If you cannot find any resolution, you may ask a question in <span className="link-button" role="button" onClick={() => electron.shell.openExternal('https://github.com/mifi/lossless-cut/discussions')}>GitHub discussions</span> or on <span className="link-button" role="button" onClick={() => electron.shell.openExternal('https://github.com/mifi/lossless-cut')}>Discord.</span>
+          If you&apos;re having a problem or question about LosslessCut, please first check the links in the <b>Help</b> menu. If you cannot find any resolution, you may ask a question in <span className="link-button" role="button" onClick={() => electron.shell.openExternal(discussionsUrl)}>GitHub discussions</span> or on <span className="link-button" role="button" onClick={() => electron.shell.openExternal(githubUrl)}>Discord.</span>
         </p>
         <p>
-          If you believe that you found a bug in LosslessCut, you may <span className="link-button" role="button" onClick={() => electron.shell.openExternal('https://github.com/mifi/lossless-cut/issues')}>report a bug</span>.
+          If you believe that you found a bug in LosslessCut, you may <span className="link-button" role="button" onClick={() => electron.shell.openExternal(publicBugReportUrl)}>report a bug</span>.
         </p>
       </Trans>
     );
 
-  const version = app.getVersion();
+  const errorText = (() => {
+    if (err == null) return 'No error occurred.';
+    return err instanceof Error ? err.stack : String(err);
+  })();
 
-  const text = `${err instanceof Error ? err.stack : 'No error occurred.'}\n\n${JSON.stringify({
+  const jsonReport = JSON.stringify({
     err: isExecaError(err) && {
       code: err.code,
       isTerminated: err.isTerminated,
@@ -46,14 +53,25 @@ export function openSendReportDialog(err: unknown | undefined, state?: unknown) 
 
     state,
 
+    appPath,
     platform,
     arch,
-    version,
+    version: appVersion,
     isWindowsStoreBuild,
     isMasBuild,
-  }, null, 2)}`;
+  }, null, 2);
 
-  ReactSwal.fire({
+  const lines = [
+    ...(message != null ? [message] : []),
+    errorText,
+    '',
+    'App state:',
+    jsonReport,
+  ];
+
+  const text = lines.join('\n');
+
+  getSwal().ReactSwal.fire({
     showCloseButton: true,
     title: i18n.t('Send problem report'),
     showConfirmButton: false,

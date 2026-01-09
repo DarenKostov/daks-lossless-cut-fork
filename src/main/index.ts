@@ -3,64 +3,43 @@ process.traceProcessWarnings = true;
 
 /* eslint-disable import/first */
 // eslint-disable-next-line import/no-extraneous-dependencies
-import electron, { BrowserWindow, BrowserWindowConstructorOptions, nativeTheme, shell, app, ipcMain, Notification, NotificationConstructorOptions } from 'electron';
+import electron, { BrowserWindow, type BrowserWindowConstructorOptions, nativeTheme, shell, app, ipcMain, Notification, type NotificationConstructorOptions } from 'electron';
 import i18n from 'i18next';
 import debounce from 'lodash.debounce/index.js';
 import yargsParser from 'yargs-parser';
 import JSON5 from 'json5';
-import remote from '@electron/remote/main';
+import remote from '@electron/remote/main/index.js';
 import { stat } from 'node:fs/promises';
 import assert from 'node:assert';
 import timers from 'node:timers/promises';
 import { z } from 'zod';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import electronUnhandled from 'electron-unhandled';
+import { fileTypeFromFile } from 'file-type/node';
+import type { Asyncify } from 'type-fest';
+// eslint-disable-next-line import/no-extraneous-dependencies
+import { installExtension, REACT_DEVELOPER_TOOLS } from 'electron-devtools-installer';
 
 import logger from './logger.js';
 import menu from './menu.js';
 import * as configStore from './configStore.js';
-import { isWindows } from './util.js';
+import { isLinux, isWindows, isMac, platform, arch, pathExists } from './util.js';
 import { appName } from './common.js';
 import attachContextMenu from './contextMenu.js';
 import HttpServer from './httpServer.js';
 import isDev from './isDev.js';
 import isStoreBuild from './isStoreBuild.js';
 import { getAboutPanelOptions } from './aboutPanel.js';
-
 import { checkNewVersion } from './updateChecker.js';
-
 import * as i18nCommon from './i18nCommon.js';
-
 import './i18n.js';
-import { ApiActionRequest } from '../../types.js';
-
-export * as ffmpeg from './ffmpeg.js';
-
-export * as i18n from './i18nCommon.js';
-
-export * as compatPlayer from './compatPlayer.js';
-
-export * as configStore from './configStore.js';
-
-export { isLinux, isWindows, isMac, platform, arch } from './util.js';
-
-export { pathToFileURL } from 'node:url';
-
-export { downloadMediaUrl } from './ffmpeg.js';
+import type { ApiActionRequest } from '../common/types.js';
+import * as ffmpeg from './ffmpeg.js';
+import * as compatPlayer from './compatPlayer.js';
+import { downloadMediaUrl } from './ffmpeg.js';
 
 
-const electronUnhandled = import('electron-unhandled');
-export const fileTypePromise = import('file-type/node');
-
-// eslint-disable-next-line unicorn/prefer-top-level-await
-(async () => {
-  try {
-    (await electronUnhandled).default({ showDialog: true, logger: (err) => logger.error('electron-unhandled', err) });
-  } catch (err) {
-    logger.error(err);
-  }
-})();
-
-// eslint-disable-next-line unicorn/prefer-export-from
-export { isDev };
+electronUnhandled({ showDialog: true, logger: (err) => logger.error('electron-unhandled', err) });
 
 // https://chromestatus.com/feature/5748496434987008
 // https://peter.sh/experiments/chromium-command-line-switches/
@@ -112,7 +91,7 @@ async function sendApiAction(action: string, args?: unknown[]) {
 }
 
 // https://github.com/electron/electron/issues/526#issuecomment-563010533
-function getSizeOptions() {
+function getSavedBounds() {
   const bounds = configStore.get('windowBounds');
   const options: BrowserWindowConstructorOptions = {};
   if (bounds) {
@@ -133,7 +112,10 @@ function getSizeOptions() {
       options.height = bounds.height;
     }
   }
-  return options;
+  return {
+    options,
+    isMaximized: bounds != null ? bounds.isMaximized : false,
+  };
 }
 
 function createWindow() {
@@ -142,17 +124,24 @@ function createWindow() {
   // https://www.electronjs.org/docs/latest/tutorial/dark-mode
   if (darkMode) nativeTheme.themeSource = 'dark';
 
+  const savedBounds = getSavedBounds();
+
   mainWindow = new BrowserWindow({
-    ...getSizeOptions(),
+    ...savedBounds.options,
     darkTheme: true,
     webPreferences: {
       contextIsolation: false,
       nodeIntegration: true,
       // https://github.com/electron/electron/issues/5107
       webSecurity: !isDev,
+      preload: fileURLToPath(new URL('../preload/index.cjs', import.meta.url)),
     },
     backgroundColor: darkMode ? '#333' : '#fff',
+    minWidth: 300,
+    minHeight: 300,
   });
+
+  if (savedBounds.isMaximized) mainWindow.maximize();
 
   remote.enable(mainWindow.webContents);
 
@@ -189,12 +178,16 @@ function createWindow() {
     }
   });
 
+  // TODO replace with `windowStatePersistence` in the future? https://github.com/electron/rfcs/pull/16
   const debouncedSaveWindowState = debounce(() => {
     if (!mainWindow || !configStore.get('storeWindowBounds')) return;
     const { x, y, width, height } = mainWindow.getNormalBounds();
-    configStore.set('windowBounds', { x, y, width, height });
+    const isMaximized = mainWindow.isMaximized();
+    configStore.set('windowBounds', { x, y, width, height, isMaximized });
   }, 500);
 
+  mainWindow.on('maximize', debouncedSaveWindowState);
+  mainWindow.on('unmaximize', debouncedSaveWindowState);
   mainWindow.on('resize', debouncedSaveWindowState);
   mainWindow.on('move', debouncedSaveWindowState);
 }
@@ -220,7 +213,7 @@ function parseCliArgs(rawArgv = process.argv) {
   const argsWithoutAppName = rawArgv.length > ignoreFirstArgs ? rawArgv.slice(ignoreFirstArgs) : [];
 
   return yargsParser(argsWithoutAppName, {
-    boolean: ['allow-multiple-instances', 'disable-networking'],
+    boolean: ['disable-networking'],
     string: ['settings-json', 'config-dir', 'lossy-mode'],
   });
 }
@@ -230,7 +223,6 @@ const argv = parseCliArgs();
 const lossyModeSchema = z.object({ videoEncoder: z.union([z.literal('libx264'), z.literal('libx265'), z.literal('libsvtav1')]) });
 // eslint-disable-next-line prefer-destructuring
 const lossyMode = argv['lossyMode'] ? lossyModeSchema.parse(JSON5.parse(argv['lossyMode'])) : undefined;
-export { lossyMode };
 
 export type LossyMode = z.infer<typeof lossyModeSchema>;
 
@@ -238,85 +230,12 @@ if (argv['localesPath'] != null) i18nCommon.setCustomLocalesPath(argv['localesPa
 
 
 function safeRequestSingleInstanceLock(additionalData: Record<string, unknown>) {
-  if (process.mas) return true; // todo remove when fixed https://github.com/electron/electron/issues/35540
+  if (process.mas) return true; // todo remove when dropping support for MacOS 13 https://github.com/electron/electron/issues/35540#issuecomment-2173130321
 
   // using additionalData because the built in "argv" passing is a bit broken:
   // https://github.com/electron/electron/issues/20322
   return app.requestSingleInstanceLock(additionalData);
 }
-
-function initApp() {
-  // On macOS, the system enforces single instance automatically when users try to open a second instance of your app in Finder, and the open-file and open-url events will be emitted for that.
-  // However when users start your app in command line, the system's single instance mechanism will be bypassed, and you have to use this method to ensure single instance.
-  // This can be tested with one terminal: npx electron .
-  // and another terminal: npx electron . path/to/file.mp4
-  app.on('second-instance', (_event, _commandLine, _workingDirectory, additionalData) => {
-    // Someone tried to run a second instance, we should focus our window.
-    if (mainWindow) {
-      if (mainWindow.isMinimized()) mainWindow.restore();
-      mainWindow.focus();
-    }
-
-    if (!(additionalData != null && typeof additionalData === 'object' && 'argv' in additionalData) || !Array.isArray(additionalData.argv)) return;
-
-    const argv2 = parseCliArgs(additionalData.argv);
-
-    logger.info('second-instance', argv2);
-
-    if (argv2._ && argv2._.length > 0) openFilesEventually(argv2._.map(String));
-    else if (argv2['keyboardAction']) sendApiAction(argv2['keyboardAction']);
-  });
-
-  // Quit when all windows are closed.
-  app.on('window-all-closed', () => {
-    app.quit();
-  });
-
-  app.on('activate', () => {
-    // On OS X it's common to re-create a window in the app when the
-    // dock icon is clicked and there are no other windows open.
-    if (mainWindow === null) {
-      createWindow();
-    }
-  });
-
-  ipcMain.on('renderer-ready', () => {
-    rendererReady = true;
-    if (filesToOpen.length > 0) openFiles(filesToOpen);
-  });
-
-  // Mac OS open with LosslessCut
-  // Emitted when the user wants to open a file with the application. The open-file event is usually emitted when the application is already open and the OS wants to reuse the application to open the file.
-  app.on('open-file', (event, path) => {
-    openFilesEventually([path]);
-    event.preventDefault(); // recommended in docs https://www.electronjs.org/docs/latest/api/app#event-open-file-macos
-  });
-
-  ipcMain.on('setAskBeforeClose', (_e, val) => {
-    askBeforeClose = val;
-  });
-
-  ipcMain.on('setLanguage', (_e, language) => {
-    i18n.changeLanguage(language).then(() => updateMenu()).catch((err) => logger.error('Failed to set language', err));
-  });
-
-  ipcMain.handle('tryTrashItem', async (_e, path) => {
-    try {
-      await stat(path);
-    } catch (err) {
-      // @ts-expect-error todo
-      if (err.code === 'ENOENT') return;
-    }
-    await shell.trashItem(path);
-  });
-
-  ipcMain.handle('showItemInFolder', (_e, path) => shell.showItemInFolder(path));
-
-  ipcMain.on('apiActionResponse', (_e, { id }) => {
-    apiActionRequests.get(id)?.();
-  });
-}
-
 
 // This promise will be fulfilled when Electron has finished
 // initialization and is ready to create browser windows.
@@ -324,8 +243,7 @@ function initApp() {
 // Call this immediately, to make sure we don't miss it (race condition)
 const readyPromise = app.whenReady();
 
-// eslint-disable-next-line unicorn/prefer-top-level-await
-(async () => {
+async function init() {
   try {
     logger.info('LosslessCut version', app.getVersion(), { isDev });
     await configStore.init({ customConfigDir: argv['configDir'] });
@@ -339,7 +257,74 @@ const readyPromise = app.whenReady();
       return;
     }
 
-    initApp();
+    // On macOS, the system enforces single instance automatically when users try to open a second instance of your app in Finder, and the open-file and open-url events will be emitted for that.
+    // However when users start your app in command line, the system's single instance mechanism will be bypassed, and you have to use this method to ensure single instance.
+    // This can be tested with one terminal: npx electron .
+    // and another terminal: npx electron . path/to/file.mp4
+    app.on('second-instance', (_event, _commandLine, _workingDirectory, additionalData) => {
+      // Someone tried to run a second instance, we should focus our window.
+      if (mainWindow) {
+        if (mainWindow.isMinimized()) mainWindow.restore();
+        mainWindow.focus();
+      }
+
+      if (!(additionalData != null && typeof additionalData === 'object' && 'argv' in additionalData) || !Array.isArray(additionalData.argv)) return;
+
+      const argv2 = parseCliArgs(additionalData.argv);
+
+      logger.info('second-instance', argv2);
+
+      if (argv2._ && argv2._.length > 0) openFilesEventually(argv2._.map(String));
+      else if (argv2['keyboardAction']) sendApiAction(argv2['keyboardAction']);
+    });
+
+    // Quit when all windows are closed.
+    app.on('window-all-closed', () => {
+      app.quit();
+    });
+
+    app.on('activate', () => {
+      // On OS X it's common to re-create a window in the app when the
+      // dock icon is clicked and there are no other windows open.
+      if (mainWindow === null) {
+        createWindow();
+      }
+    });
+
+    ipcMain.on('renderer-ready', () => {
+      rendererReady = true;
+      if (filesToOpen.length > 0) openFiles(filesToOpen);
+    });
+
+    // Mac OS open with LosslessCut
+    // Emitted when the user wants to open a file with the application. The open-file event is usually emitted when the application is already open and the OS wants to reuse the application to open the file.
+    app.on('open-file', (event, path) => {
+      openFilesEventually([path]);
+      event.preventDefault(); // recommended in docs https://www.electronjs.org/docs/latest/api/app#event-open-file-macos
+    });
+
+    ipcMain.on('setAskBeforeClose', (_e, val) => {
+      askBeforeClose = val;
+    });
+
+    ipcMain.on('setLanguage', (_e, language) => {
+      i18n.changeLanguage(language).then(() => updateMenu()).catch((err) => logger.error('Failed to set language', err));
+    });
+
+    ipcMain.handle('tryTrashItem', async (_e, path) => {
+      try {
+        await stat(path);
+      } catch (err) {
+        if (err instanceof Error && 'code' in err && err.code === 'ENOENT') return;
+      }
+      await shell.trashItem(path);
+    });
+
+    ipcMain.handle('showItemInFolder', (_e, path) => shell.showItemInFolder(path));
+
+    ipcMain.on('apiActionResponse', (_e, { id }) => {
+      apiActionRequests.get(id)?.();
+    });
 
     logger.info('Waiting for app to become ready');
     await readyPromise;
@@ -371,10 +356,8 @@ const readyPromise = app.whenReady();
 
     if (isDev) {
       // eslint-disable-next-line @typescript-eslint/no-var-requires,global-require,import/no-extraneous-dependencies
-      const { default: installExtension, REACT_DEVELOPER_TOOLS } = require('electron-devtools-installer');
-
       installExtension(REACT_DEVELOPER_TOOLS)
-        .then((name: string) => logger.info('Added Extension', name))
+        .then((extension) => logger.info('Added Extension', extension.name))
         .catch((err: unknown) => logger.error('Failed to add extension', err));
     }
 
@@ -391,9 +374,9 @@ const readyPromise = app.whenReady();
   } catch (err) {
     logger.error('Failed to initialize', err);
   }
-})();
+}
 
-export function focusWindow() {
+function focusWindow() {
   try {
     app.focus({ steal: true });
   } catch (err) {
@@ -401,18 +384,75 @@ export function focusWindow() {
   }
 }
 
-export function quitApp() {
+function quitApp() {
   // allow HTTP API to respond etc.
   timers.setTimeout(1000).then(() => electron.app.quit());
 }
 
-export const hasDisabledNetworking = () => !!disableNetworking;
+const hasDisabledNetworking = () => !!disableNetworking;
 
-export const setProgressBar = (v: number) => mainWindow?.setProgressBar(v);
+const setProgressBar = (v: number) => mainWindow?.setProgressBar(v);
 
-export function sendOsNotification(options: NotificationConstructorOptions) {
+function sendOsNotification(options: NotificationConstructorOptions) {
   if (!Notification.isSupported()) return;
   const notification = new Notification(options);
   notification.on('failed', (_e, error) => logger.warn('Notification failed', error));
   notification.show();
 }
+
+const remoteApi = {
+  pathExists,
+  downloadMediaUrl,
+  fileTypeFromFile,
+  focusWindow,
+  quitApp,
+  setProgressBar,
+  sendOsNotification,
+};
+
+export type RemoteApi = typeof remoteApi;
+
+export type RemoteRpcApi = {
+  [K in keyof RemoteApi]: Asyncify<RemoteApi[K]>;
+};
+
+// using @electron/remote
+const remoteApiLegacy = {
+  ffmpeg,
+  i18n: i18nCommon,
+  compatPlayer,
+  configStore,
+  isLinux,
+  isWindows,
+  isMac,
+  platform,
+  arch,
+  isDev,
+  lossyMode,
+  pathToFileURL,
+  hasDisabledNetworking,
+};
+
+export type RemoteApiLegacy = typeof remoteApiLegacy;
+
+
+// @ts-expect-error don't know how to type
+app.addListener('remote-require', (event: { returnValue: RemoteApiLegacy }, _webContents: unknown, moduleName: string) => {
+  if (moduleName === './index.js') {
+    // eslint-disable-next-line no-param-reassign
+    event.returnValue = remoteApiLegacy;
+  }
+});
+
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+ipcMain.handle('__electron_rpc__', async (_event, method: keyof RemoteApi, args: any[]) => {
+  const fn = remoteApi[method];
+  assert(fn, `Unknown API method: ${method}`);
+  // @ts-expect-error don't know how to type
+  return fn(...args);
+});
+
+// cannot top level await because app.whenReady will hang forever
+// eslint-disable-next-line unicorn/prefer-top-level-await
+init();

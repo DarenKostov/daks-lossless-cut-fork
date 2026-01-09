@@ -3,19 +3,22 @@ import flatMap from 'lodash/flatMap';
 import sum from 'lodash/sum';
 import pMap from 'p-map';
 import invariant from 'tiny-invariant';
+import i18n from 'i18next';
 
 import { getSuffixedOutPath, transferTimestamps, getOutFileExtension, getOutDir, deleteDispositionValue, getHtml5ifiedPath, unlinkWithRetry, getFrameDuration, isMac } from '../util';
-import { isCuttingStart, isCuttingEnd, runFfmpegWithProgress, getFfCommandLine, getDuration, createChaptersFromSegments, readFileMeta, getExperimentalArgs, getVideoTimescaleArgs, logStdoutStderr, runFfmpegConcat, RefuseOverwriteError, runFfmpeg } from '../ffmpeg';
+import { isCuttingStart, isCuttingEnd, runFfmpegWithProgress, getFfCommandLine, getDuration, createChaptersFromSegments, readFileFfprobeMeta, getExperimentalArgs, getVideoTimescaleArgs, logStdoutStderr, runFfmpegConcat, RefuseOverwriteError, runFfmpeg } from '../ffmpeg';
 import { getMapStreamsArgs, getStreamIdsToCopy } from '../util/streams';
 import { needsSmartCut, getCodecParams } from '../smartcut';
 import { getGuaranteedSegments, isDurationValid } from '../segments';
-import { FFprobeStream } from '../../../../ffprobe';
-import { AvoidNegativeTs, Html5ifyMode, PreserveMetadata } from '../../../../types';
-import { AllFilesMeta, Chapter, CopyfileStreams, CustomTagsByFile, LiteFFprobeStream, ParamsByStreamId, SegmentToExport } from '../types';
-import { LossyMode } from '../../../main';
+import type { FFprobeStream } from '../../../common/ffprobe';
+import type { AvoidNegativeTs, Html5ifyMode, PreserveMetadata } from '../../../common/types';
+import type { AllFilesMeta, Chapter, CopyfileStreams, CustomTagsByFile, LiteFFprobeStream, ParamsByStreamId, SegmentToExport } from '../types';
+import type { LossyMode } from '../../../main';
+import { UserFacingError } from '../../errors';
+import mainApi from '../mainApi';
 
 const { join, resolve, dirname } = window.require('path');
-const { writeFile, mkdir, access, constants: { F_OK, W_OK } } = window.require('fs/promises');
+const { writeFile, mkdir, access, constants: { W_OK } } = window.require('fs/promises');
 
 
 export class OutputNotWritableError extends Error {
@@ -68,14 +71,13 @@ async function tryDeleteFiles(paths: string[]) {
   return pMap(paths, (path) => unlinkWithRetry(path).catch((err) => console.error('Failed to delete', path, err)), { concurrency: 5 });
 }
 
-async function pathExists(path: string) {
-  try {
-    await access(path, F_OK);
-    return true;
-  } catch {
-    return false;
-  }
+export async function maybeMkDeepOutDir({ outputDir, fileOutPath }: { outputDir: string, fileOutPath: string }) {
+  // cutFileNames might contain slashes and therefore might have a subdir(tree) that we need to mkdir
+  // https://github.com/mifi/lossless-cut/issues/1532
+  const actualOutputDir = dirname(fileOutPath);
+  if (actualOutputDir !== outputDir) await mkdir(actualOutputDir, { recursive: true });
 }
+
 
 function useFfmpegOperations({ filePath, treatInputFileModifiedTimeAsStart, treatOutputFileModifiedTimeAsStart, isEncoding, lossyMode, enableOverwriteOutput, outputPlaybackRate, cutFromAdjustmentFrames, cutToAdjustmentFrames, appendLastCommandsLog, encCustomBitrate, appendFfmpegCommandLog }: {
   filePath: string | undefined,
@@ -92,7 +94,7 @@ function useFfmpegOperations({ filePath, treatInputFileModifiedTimeAsStart, trea
   appendFfmpegCommandLog: (args: string[]) => void,
 }) {
   const shouldSkipExistingFile = useCallback(async (path: string) => {
-    const fileExists = await pathExists(path);
+    const fileExists = await mainApi.pathExists(path);
 
     // If output file exists, check that it is writable, so we can inform user if it's not (or else ffmpeg will fail with "Permission denied")
     // this seems to sometimes happen on Windows, not sure why.
@@ -178,6 +180,7 @@ function useFfmpegOperations({ filePath, treatInputFileModifiedTimeAsStart, trea
         copyFileStreams: [{ path: metadataFromPath, streamIds: streamIdsToCopy }],
         outFormat,
         manuallyCopyDisposition: true,
+        needFlac: true, // https://github.com/mifi/lossless-cut/issues/2636
       });
 
       // Keep this similar to losslessCutSingle()
@@ -214,11 +217,11 @@ function useFfmpegOperations({ filePath, treatInputFileModifiedTimeAsStart, trea
       // https://superuser.com/questions/787064/filename-quoting-in-ffmpeg-concat
       // Must add "file:" or we get "Impossible to open 'pipe:xyz.mp4'" on newer ffmpeg versions
       // https://superuser.com/questions/718027/ffmpeg-concat-doesnt-work-with-absolute-path
-      const concatTxt = paths.map((file) => `file 'file:${resolve(file).replaceAll('\'', "'\\''")}'`).join('\n');
+      const concatTxt = paths.map((file) => `file 'file:${resolve(file).replaceAll('\'', String.raw`'\''`)}'`).join('\n');
 
       const ffmpegCommandLine = getFfCommandLine('ffmpeg', ffmpegArgs);
 
-      const fullCommandLine = `echo -e "${concatTxt.replace(/\n/, '\\n')}" | ${ffmpegCommandLine}`;
+      const fullCommandLine = `echo -e "${concatTxt.replace(/\n/, String.raw`\n`)}" | ${ffmpegCommandLine}`;
       console.log(fullCommandLine);
       appendLastCommandsLog(fullCommandLine);
 
@@ -322,7 +325,7 @@ function useFfmpegOperations({ filePath, treatInputFileModifiedTimeAsStart, trea
       ...flatMap(Object.entries(customTagsByFile[filePath] || []), ([key, value]) => ['-metadata', `${key}=${value}`]),
     ];
 
-    const mapStreamsArgs = getMapStreamsArgs({ copyFileStreams: copyFileStreamsFiltered, allFilesMeta, outFormat, areWeCutting });
+    const mapStreamsArgs = getMapStreamsArgs({ copyFileStreams: copyFileStreamsFiltered, allFilesMeta, outFormat, needFlac: areWeCutting });
 
     const customParamsArgs = (() => {
       const ret: string[] = [];
@@ -337,11 +340,17 @@ function useFfmpegOperations({ filePath, treatInputFileModifiedTimeAsStart, trea
               ret.push(`-disposition:${outputIndex}`, String(dispositionArg));
             }
 
-            if (streamParams.bsfH264Mp4toannexb) {
-              ret.push(`-bsf:${outputIndex}`, String('h264_mp4toannexb'));
+            const bitstreamFilters: string[] = [];
+            if (streamParams.bsfH264Mp4toannexb) bitstreamFilters.push('h264_mp4toannexb');
+            if (streamParams.bsfHevcMp4toannexb) bitstreamFilters.push('hevc_mp4toannexb');
+            if (streamParams.bsfHevcAudInsert) bitstreamFilters.push('hevc_metadata=aud=insert');
+
+            if (bitstreamFilters.length > 0) {
+              ret.push(`-bsf:${outputIndex}`, bitstreamFilters.join(','));
             }
-            if (streamParams.bsfHevcMp4toannexb) {
-              ret.push(`-bsf:${outputIndex}`, String('hevc_mp4toannexb'));
+
+            if (streamParams.tag != null) {
+              ret.push(`-tag:${outputIndex}`, streamParams.tag);
             }
 
             // custom stream metadata tags
@@ -482,12 +491,12 @@ function useFfmpegOperations({ filePath, treatInputFileModifiedTimeAsStart, trea
   }, [appendFfmpegCommandLog, filePath]);
 
   const cutMultiple = useCallback(async ({
-    outputDir, customOutDir, segments: segmentsIn, outSegFileNames, fileDuration, rotation, detectedFps, onProgress: onTotalProgress, keyframeCut, copyFileStreams, allFilesMeta, outFormat, shortestFlag, ffmpegExperimental, preserveMetadata, preserveMetadataOnMerge, preserveMovData, preserveChapters, movFastStart, avoidNegativeTs, customTagsByFile, paramsByStreamId, chapters,
+    outputDir, customOutDir, segments: segmentsIn, cutFileNames, fileDuration, rotation, detectedFps, onProgress: onTotalProgress, keyframeCut, copyFileStreams, allFilesMeta, outFormat, shortestFlag, ffmpegExperimental, preserveMetadata, preserveMetadataOnMerge, preserveMovData, preserveChapters, movFastStart, avoidNegativeTs, customTagsByFile, paramsByStreamId, chapters,
   }: {
     outputDir: string,
     customOutDir: string | undefined,
     segments: SegmentToExport[],
-    outSegFileNames: string[],
+    cutFileNames: string[],
     fileDuration: number | undefined,
     rotation: number | undefined,
     detectedFps: number | undefined,
@@ -529,14 +538,11 @@ function useFfmpegOperations({ filePath, treatInputFileModifiedTimeAsStart, trea
       const onProgress = (progress: number) => onSingleProgress(i, progress / 2);
       const onConcatProgress = (progress: number) => onSingleProgress(i, (1 + progress) / 2);
 
-      const finalOutPath = join(outputDir, outSegFileNames[i]!);
+      const finalOutPath = join(outputDir, cutFileNames[i]!);
 
       if (await shouldSkipExistingFile(finalOutPath)) return { path: finalOutPath, created: false };
 
-      // outSegFileNames might contain slashes and therefore might have a subdir(tree) that we need to mkdir
-      // https://github.com/mifi/lossless-cut/issues/1532
-      const actualOutputDir = dirname(finalOutPath);
-      if (actualOutputDir !== outputDir) await mkdir(actualOutputDir, { recursive: true });
+      await maybeMkDeepOutDir({ outputDir, fileOutPath: finalOutPath });
 
       if (!isEncoding) {
         // simple lossless cut
@@ -591,7 +597,7 @@ function useFfmpegOperations({ filePath, treatInputFileModifiedTimeAsStart, trea
       }
 
       const { losslessCutFrom, segmentNeedsSmartCut } = await needsSmartCut({ path: filePath, desiredCutFrom, videoStream });
-      if (segmentNeedsSmartCut && !detectedFps) throw new Error('Smart cut is not possible when FPS is unknown');
+      if (segmentNeedsSmartCut && !detectedFps) throw new UserFacingError(i18n.t('Smart cut is not possible when FPS is unknown'));
       console.log('Smart cut on video stream', videoStream.index);
 
       // If we are cutting within two keyframes, just encode the whole part and return that
@@ -635,7 +641,7 @@ function useFfmpegOperations({ filePath, treatInputFileModifiedTimeAsStart, trea
         await cutEncodeSmartPartWrapper({ cutFrom: desiredCutFrom, cutTo: encodeCutToSafe, outPath: smartCutEncodedPartOutPath });
 
         // need to re-read streams because indexes may have changed. Using main file as source of streams and metadata
-        const { streams: streamsAfterCut } = await readFileMeta(losslessPartOutPath);
+        const { streams: streamsAfterCut } = await readFileFfprobeMeta(losslessPartOutPath);
 
         await concatFiles({ paths: smartCutSegmentsToConcat, outDir: outputDir, outPath: finalOutPath, metadataFromPath: losslessPartOutPath, outFormat, includeAllStreams: true, streams: streamsAfterCut, ffmpegExperimental, preserveMovData, movFastStart, chapters, preserveMetadataOnMerge, videoTimebase, onProgress: onConcatProgress });
         return { path: finalOutPath, created: true };
@@ -649,7 +655,7 @@ function useFfmpegOperations({ filePath, treatInputFileModifiedTimeAsStart, trea
     } finally {
       if (chaptersPath) await tryDeleteFiles([chaptersPath]);
     }
-  }, [shouldSkipExistingFile, isEncoding, filePath, losslessCutSingle, cutEncodeSmartPart, encCustomBitrate, lossyMode, concatFiles]);
+  }, [shouldSkipExistingFile, isEncoding, filePath, lossyMode, losslessCutSingle, cutEncodeSmartPart, encCustomBitrate, concatFiles]);
 
   const concatCutSegments = useCallback(async ({ customOutDir, outFormat, segmentPaths, ffmpegExperimental, onProgress, preserveMovData, movFastStart, chapterNames, preserveMetadataOnMerge, mergedOutFilePath }: {
     customOutDir: string | undefined,
@@ -672,7 +678,7 @@ function useFfmpegOperations({ filePath, treatInputFileModifiedTimeAsStart, trea
     const metadataFromPath = segmentPaths[0];
     invariant(metadataFromPath != null);
     // need to re-read streams because may have changed
-    const { streams } = await readFileMeta(metadataFromPath);
+    const { streams } = await readFileFfprobeMeta(metadataFromPath);
     await concatFiles({ paths: segmentPaths, outDir, outPath: mergedOutFilePath, metadataFromPath, outFormat, includeAllStreams: true, streams, ffmpegExperimental, onProgress, preserveMovData, movFastStart, chapters, preserveMetadataOnMerge });
   }, [concatFiles, filePath, shouldSkipExistingFile]);
 
@@ -704,8 +710,6 @@ function useFfmpegOperations({ filePath, treatInputFileModifiedTimeAsStart, trea
     // h264/aac_at: No licensing when using HW encoder (Video/Audio Toolbox on Mac)
     // https://github.com/mifi/lossless-cut/issues/372#issuecomment-810766512
 
-    const targetHeight = 400;
-
     switch (video) {
       case 'hq': {
         // eslint-disable-next-line unicorn/prefer-ternary
@@ -723,6 +727,8 @@ function useFfmpegOperations({ filePath, treatInputFileModifiedTimeAsStart, trea
         break;
       }
       case 'lq': {
+        const targetHeight = 400;
+
         // eslint-disable-next-line unicorn/prefer-ternary
         if (isMac) {
           videoArgs = ['-vf', `scale=-2:${targetHeight},format=yuv420p`, '-allow_sw', '1', '-sws_flags', 'lanczos', '-vcodec', 'h264', '-b:v', '1500k'];
@@ -911,7 +917,7 @@ function useFfmpegOperations({ filePath, treatInputFileModifiedTimeAsStart, trea
     let streamArgs: string[] = [];
     const outPaths = await pMap(outStreams, async ({ index, codec, type, format: { format, ext } }) => {
       const outPath = getSuffixedOutPath({ customOutDir, filePath, nameSuffix: `stream-${index}-${type}-${codec}.${ext}` });
-      if (!enableOverwriteOutput && await pathExists(outPath)) throw new RefuseOverwriteError();
+      if (!enableOverwriteOutput && await mainApi.pathExists(outPath)) throw new RefuseOverwriteError();
 
       streamArgs = [
         ...streamArgs,
@@ -946,8 +952,8 @@ function useFfmpegOperations({ filePath, treatInputFileModifiedTimeAsStart, trea
     const outPaths = await pMap(streams, async ({ index, codec_name: codec, codec_type: type }) => {
       const ext = codec || 'bin';
       const outPath = getSuffixedOutPath({ customOutDir, filePath, nameSuffix: `stream-${index}-${type}-${codec}.${ext}` });
-      if (outPath == null) throw new Error();
-      if (!enableOverwriteOutput && await pathExists(outPath)) throw new RefuseOverwriteError();
+      invariant(outPath != null);
+      if (!enableOverwriteOutput && await mainApi.pathExists(outPath)) throw new RefuseOverwriteError();
 
       streamArgs = [
         ...streamArgs,
@@ -1001,3 +1007,5 @@ function useFfmpegOperations({ filePath, treatInputFileModifiedTimeAsStart, trea
 }
 
 export default useFfmpegOperations;
+
+export type FfmpegOperations = ReturnType<typeof useFfmpegOperations>;

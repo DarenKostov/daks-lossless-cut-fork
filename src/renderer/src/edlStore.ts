@@ -6,7 +6,8 @@ import { ZodError } from 'zod';
 import { parseSrtToSegments, formatSrt, parseCuesheet, parseXmeml, parseFcpXml, parseCsv, parseCutlist, parsePbf, parseEdl, formatCsvHuman, formatTsvHuman, formatCsvFrames, formatCsvSeconds, parseCsvTime, getFrameValParser, parseDvAnalyzerSummaryTxt, parseOtio } from './edlFormats';
 import { askForYouTubeInput, showOpenDialog } from './dialogs';
 import { getOutPath } from './util';
-import { EdlExportType, EdlFileType, EdlImportType, GetFrameCount, LlcProject, llcProjectV1Schema, llcProjectV2Schema, SegmentBase, StateSegment } from './types';
+import type { EdlExportType, EdlFileType, EdlImportType, GetFrameCount, LlcProject, SegmentBase, StateSegment } from './types';
+import { llcProjectV1Schema, llcProjectV2Schema } from './types';
 import { mapSaveableSegments } from './segments';
 import isDev from './isDev';
 
@@ -155,8 +156,8 @@ export async function readEdlFile({ type, path, fps }: {
   throw new Error('Invalid EDL type');
 }
 
-export async function askForEdlImport({ type, fps }: { type: EdlImportType, fps?: number | undefined }) {
-  if (type === 'youtube') return askForYouTubeInput();
+export async function askForEdlImport({ type, fps, fileDuration }: { type: EdlImportType, fps?: number | undefined, fileDuration?: number | undefined }) {
+  if (type === 'youtube') return askForYouTubeInput({ fileDuration });
 
   let filters;
   // eslint-disable-next-line unicorn/prefer-switch

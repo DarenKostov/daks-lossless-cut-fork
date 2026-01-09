@@ -1,5 +1,6 @@
-import { ReactEventHandler, useCallback, useMemo, useRef, useState } from 'react';
-import { ChromiumHTMLVideoElement, PlaybackMode } from '../types';
+import type { ReactEventHandler } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
+import type { ChromiumHTMLVideoElement, PlaybackMode } from '../types';
 import { showPlaybackFailedMessage } from '../swal';
 
 export default ({ filePath }: { filePath: string | undefined }) => {
@@ -7,7 +8,13 @@ export default ({ filePath }: { filePath: string | undefined }) => {
   const [playbackRate, setPlaybackRateState] = useState(1);
   const [outputPlaybackRate, setOutputPlaybackRateState] = useState(1);
   const [playerTime, setPlayerTime] = useState<number>();
+  const [playbackMode, setPlaybackModeState] = useState<PlaybackMode>();
   const playbackModeRef = useRef<PlaybackMode>();
+
+  const setPlaybackMode = useCallback((mode: PlaybackMode | undefined) => {
+    playbackModeRef.current = mode;
+    setPlaybackModeState(mode);
+  }, []);
 
   const videoRef = useRef<ChromiumHTMLVideoElement>(null);
   const videoContainerRef = useRef<HTMLDivElement>(null);
@@ -59,6 +66,7 @@ export default ({ filePath }: { filePath: string | undefined }) => {
   }, []);
 
   const seekAbs = useCallback((val: number | undefined) => {
+    if (filePath == null) return;
     const video = videoRef.current;
     if (video == null || val == null || Number.isNaN(val)) return;
     let outVal = val;
@@ -67,7 +75,7 @@ export default ({ filePath }: { filePath: string | undefined }) => {
 
     smoothSeek(outVal);
     setCommandedTime(outVal);
-  }, [setCommandedTime, smoothSeek]);
+  }, [filePath, setCommandedTime, smoothSeek]);
 
   // Relevant time is the player's playback position if we're currently playing - if not, it's the user's commanded time.
   const relevantTime = useMemo(() => (playing ? playerTime : commandedTime) || 0, [commandedTime, playerTime, playing]);
@@ -92,8 +100,8 @@ export default ({ filePath }: { filePath: string | undefined }) => {
 
   const onVideoAbort = useCallback(() => {
     setPlaying(false); // we want to preserve current time https://github.com/mifi/lossless-cut/issues/1674#issuecomment-1658937716
-    playbackModeRef.current = undefined;
-  }, []);
+    setPlaybackMode(undefined);
+  }, [setPlaybackMode]);
 
   const onStartPlaying = useCallback(() => onPlayingChange(true), [onPlayingChange]);
 
@@ -145,6 +153,8 @@ export default ({ filePath }: { filePath: string | undefined }) => {
     getRelevantTime,
     onVideoAbort,
     setOutputPlaybackRateState,
+    playbackMode,
+    setPlaybackMode,
     playbackModeRef,
     playerTime,
     setPlayerTime,

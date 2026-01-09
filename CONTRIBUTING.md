@@ -1,6 +1,6 @@
 # Contributing
 
-## [Translation](translation.md)
+## [Translations](docs/translation.md)
 
 ## Development environment setup
 
@@ -66,10 +66,13 @@ Windows store version is built as a Desktop Bridge app (with `runFullTrust` capa
 
 Before releasing, consider [Maintainence chores](#maintainence-chores) first.
 
-### Build new version
+### Prepare and build new version
 
 - `git checkout master`
 - `git merge stores` (in case there's an old unmerged stores hotfix)
+- **Prepare release notes** from commit history
+- Create a new file `versions/x.y.z.md` and write the most important highlights from the release notes, but **remove github issue #references**
+- `node script/generateVersions.ts && git add versions/*.md src/renderer/src/versions.json && git commit -m 'Update change log'`
 - *If Store-only hotfix release*
   - `git checkout stores`
   - `npm version patch`
@@ -80,14 +83,14 @@ Before releasing, consider [Maintainence chores](#maintainence-chores) first.
 
 ### Release built version
 
-- Open draft in github and add Release notes
-- Add prefix `-DO-NOT-DOWNLOAD` to `LosslessCut-mac-universal.pkg` and `LosslessCut-win-x64.appx`
+- Open draft in github and add the prepared release notes
+- Add suffix `-DONT-USE-THIS-FILE` to `LosslessCut-mac-universal.pkg` and `LosslessCut-win-x64.appx`
 - *If GitHub release*
   - Release the draft
 - *If Store-only hotfix release*
   - Remove all other artifacts and release the draft as **pre-release**
 
-#### After releasing on GitHub
+#### After releasing in GitHub
 
 - *If Stores-only hotfix release*
   - `git checkout master`
@@ -112,16 +115,11 @@ For per-platform build/signing setup, see [this article](https://mifi.no/blog/au
 
 Find the [latest PR](https://github.com/mifi/lossless-cut/pulls) from Weblate and **rebase+merge** it.
 
-**Warning:** Do not squash and merge (see [here why](translation.md#weblate))!
+**Warning:** Do not squash and merge (see [here why](docs/translation.md#weblate))!
 
 ## Minimum OS version
 
-Minimum supported OS versions for Electron. As of Electron 35:
-
-- MacOS 11 Big Sur
-- Windows 10
-
-Note that older versions of LosslessCut still work on older operating systems.
+See [requirements](docs/requirements.md).
 
 ### MacOS [`LSMinimumSystemVersion`](https://developer.apple.com/documentation/bundleresources/information_property_list/lsminimumsystemversion)
 
@@ -139,7 +137,7 @@ cat dist/mas-dev-arm64/LosslessCut.app/Contents/Info.plist
 
 `LSMinimumSystemVersion` can be overridden in `electron-builder` by [`mac.minimumSystemVersion`](https://www.electron.build/configuration/mac.html)
 
-See also `MACOS_MIN` in [ffmpeg-build-script](https://github.com/mifi/ffmpeg-build-script/blob/master/build-ffmpeg).
+See also `MACOSX_DEPLOYMENT_TARGET` in [ffmpeg-build-script](https://github.com/mifi/ffmpeg-build-script/blob/master/build-ffmpeg).
 
 Links:
 - https://support.google.com/chrome/a/answer/7100626
@@ -149,7 +147,7 @@ Links:
 ## Maintainence chores
 
 ### Keep dependencies up to date
-- FFmpeg: [ffmpeg-build-script](https://github.com/mifi/ffmpeg-build-script), [ffmpeg-builds](https://github.com/mifi/ffmpeg-builds)
+- FFmpeg: [ffmpeg-build-script](https://github.com/mifi/ffmpeg-build-script), [ffmpeg-builds](https://github.com/mifi/ffmpeg-builds) and [package.json](./package.json) download scripts.
 - `electron` and upgrade [electron.vite.config.ts](./electron.vite.config.ts) `target`s.
 - `@electron/remote`
 - `package.json` / `yarn.lock`
@@ -157,12 +155,6 @@ Links:
 ### i18n
 ```bash
 yarn scan-i18n
-```
-
-### Generate license summary
-
-```bash
-npx license-checker --summary
 ```
 
 ### Regenerate licenses file
@@ -177,8 +169,12 @@ Then deploy.
 
 https://github.com/mifi/lossless-cut/security/dependabot
 
-## ffmpeg builds
+## FFmpeg builds
 
 - https://github.com/BtbN/FFmpeg-Builds
 - https://www.gyan.dev/ffmpeg/builds/
 - https://github.com/m-ab-s/media-autobuild_suite
+
+## Other
+
+- Update `copyrightYear`

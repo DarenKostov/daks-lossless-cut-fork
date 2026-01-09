@@ -1,6 +1,7 @@
 import invariant from 'tiny-invariant';
-import { FFprobeStream, FFprobeStreamDisposition } from '../../../../ffprobe';
-import { AllFilesMeta, ChromiumHTMLAudioElement, ChromiumHTMLVideoElement, CopyfileStreams, LiteFFprobeStream } from '../types';
+import type { FFprobeStream, FFprobeStreamDisposition } from '../../../common/ffprobe';
+import type { AllFilesMeta, ChromiumHTMLAudioElement, ChromiumHTMLVideoElement, CopyfileStreams, LiteFFprobeStream } from '../types';
+import type { FileStream } from '../ffmpeg';
 
 
 // taken from `ffmpeg -codecs`
@@ -105,8 +106,13 @@ export const isMatroska = (format: string | undefined) => format != null && ['ma
 
 type GetVideoArgsFn = (a: { streamIndex: number, outputIndex: number }) => string[] | undefined;
 
-function getPerStreamFlags({ stream, outputIndex, outFormat, manuallyCopyDisposition = false, getVideoArgs = () => undefined, areWeCutting }: {
-  stream: LiteFFprobeStream, outputIndex: number, outFormat: string | undefined, manuallyCopyDisposition?: boolean | undefined, getVideoArgs?: GetVideoArgsFn | undefined, areWeCutting: boolean | undefined
+function getPerStreamFlags({ stream, outputIndex, outFormat, manuallyCopyDisposition = false, getVideoArgs = () => undefined, needFlac }: {
+  stream: LiteFFprobeStream,
+  outputIndex: number,
+  outFormat: string | undefined,
+  manuallyCopyDisposition?: boolean | undefined,
+  getVideoArgs?: GetVideoArgsFn | undefined,
+  needFlac: boolean | undefined,
 }) {
   let args: string[] = [];
 
@@ -162,7 +168,7 @@ function getPerStreamFlags({ stream, outputIndex, outFormat, manuallyCopyDisposi
       // I think DV format only supports PCM_S16LE https://github.com/FFmpeg/FFmpeg/blob/b92028346c35dad837dd1160930435d88bd838b5/libavformat/dvenc.c#L450
       addCodecArgs('pcm_s16le');
       addArgs(`-ar:${outputIndex}`, '48000'); // maybe technically not lossless?
-    } else if (outFormat === 'flac' && areWeCutting && stream.codec_name === 'flac') { // https://github.com/mifi/lossless-cut/issues/1809
+    } else if (outFormat === 'flac' && needFlac && stream.codec_name === 'flac') { // https://github.com/mifi/lossless-cut/issues/1809
       addCodecArgs('flac'); // lossless because flac is a lossless codec
     } else {
       addCodecArgs('copy');
@@ -173,14 +179,6 @@ function getPerStreamFlags({ stream, outputIndex, outFormat, manuallyCopyDisposi
       args = [...videoArgs];
     } else {
       addCodecArgs('copy');
-    }
-
-    if (isMov(outFormat)) {
-      // 0x31766568 see https://github.com/mifi/lossless-cut/issues/1444
-      // eslint-disable-next-line unicorn/prefer-switch, unicorn/no-lonely-if
-      if (['0x0000', '0x31637668', '0x31766568'].includes(stream.codec_tag) && stream.codec_name === 'hevc') {
-        addArgs(`-tag:${outputIndex}`, 'hvc1');
-      }
     }
   } else { // other stream types
     addCodecArgs('copy');
@@ -199,14 +197,14 @@ function getPerStreamFlags({ stream, outputIndex, outFormat, manuallyCopyDisposi
   return args;
 }
 
-export function getMapStreamsArgs({ startIndex = 0, outFormat, allFilesMeta, copyFileStreams, manuallyCopyDisposition, getVideoArgs, areWeCutting }: {
+export function getMapStreamsArgs({ startIndex = 0, outFormat, allFilesMeta, copyFileStreams, manuallyCopyDisposition, getVideoArgs, needFlac }: {
   startIndex?: number,
   outFormat: string | undefined,
   allFilesMeta: Record<string, Pick<AllFilesMeta[string], 'streams'>>,
   copyFileStreams: CopyfileStreams,
   manuallyCopyDisposition?: boolean,
   getVideoArgs?: GetVideoArgsFn,
-  areWeCutting?: boolean,
+  needFlac?: boolean,
 }) {
   let args: string[] = [];
   let outputIndex = startIndex;
@@ -219,7 +217,7 @@ export function getMapStreamsArgs({ startIndex = 0, outFormat, allFilesMeta, cop
       args = [
         ...args,
         '-map', `${fileIndex}:${streamId}`,
-        ...getPerStreamFlags({ stream, outputIndex, outFormat, manuallyCopyDisposition, getVideoArgs, areWeCutting }),
+        ...getPerStreamFlags({ stream, outputIndex, outFormat, manuallyCopyDisposition, getVideoArgs, needFlac }),
       ];
       outputIndex += 1;
     });
@@ -259,7 +257,7 @@ export function isStreamThumbnail(stream: Pick<FFprobeStream, 'codec_type' | 'di
 export const getAudioStreams = <T extends Pick<FFprobeStream, 'codec_type'>>(streams: T[]) => streams.filter((stream) => stream.codec_type === 'audio');
 export const getRealVideoStreams = <T extends Pick<FFprobeStream, 'codec_type' | 'disposition'>>(streams: T[]) => streams.filter((stream) => stream.codec_type === 'video' && !isStreamThumbnail(stream));
 export const getSubtitleStreams = <T extends Pick<FFprobeStream, 'codec_type'>>(streams: T[]) => streams.filter((stream) => stream.codec_type === 'subtitle');
-export const isGpsStream = <T extends Pick<FFprobeStream, 'codec_type' | 'tags'>>(stream: T) => stream.codec_type === 'subtitle' && stream.tags?.['handler_name'] === '\u0010DJI.Subtitle';
+export const isGpsStream = <T extends Pick<FileStream, 'guessedType' | 'codec_type' | 'tags'>>(stream: T) => stream.codec_type === 'subtitle' && (stream.tags?.['handler_name'] === '\u0010DJI.Subtitle' || stream.guessedType === 'dji-gps-srt');
 
 // videoTracks/audioTracks seems to be 1-indexed, while ffmpeg is 0-indexes
 const getHtml5TrackId = (ffmpegTrackIndex: number) => String(ffmpegTrackIndex + 1);

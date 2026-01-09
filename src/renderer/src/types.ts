@@ -1,6 +1,7 @@
 import type { MenuItem, MenuItemConstructorOptions } from 'electron';
 import { z } from 'zod';
-import { FFprobeChapter, FFprobeFormat, FFprobeStream } from '../../../ffprobe';
+import type { FFprobeChapter, FFprobeFormat, FFprobeStream } from '../../common/ffprobe';
+import type { FileStream } from './ffmpeg';
 
 
 export interface ChromiumHTMLVideoElement extends HTMLVideoElement {
@@ -82,7 +83,7 @@ export interface InverseCutSegment extends DefiniteSegmentBase {
 }
 
 
-export type PlaybackMode = 'loop-segment-start-end' | 'loop-segment' | 'play-segment-once' | 'loop-selected-segments';
+export type PlaybackMode = 'loop-segment-start-end' | 'loop-segment' | 'play-segment-once' | 'play-selected-segments' | 'loop-selected-segments';
 
 export type EdlFileType = 'llc' | 'csv' | 'csv-frames' | 'cutlist' | 'xmeml' | 'fcpxml' | 'dv-analyzer-summary-txt' | 'cue' | 'pbf' | 'edl' | 'srt' | 'otio';
 
@@ -128,8 +129,8 @@ export type ContextMenuTemplate = (MenuItemConstructorOptions | MenuItem)[];
 export type ExportMode = 'segments_to_chapters' | 'merge' | 'merge+separate' | 'separate';
 
 export type FilesMeta = Record<string, {
-  streams: FFprobeStream[];
-  formatData: FFprobeFormat;
+  streams: FileStream[];
+  format: FFprobeFormat;
   chapters: FFprobeChapter[];
 }>
 
@@ -142,9 +143,17 @@ export interface Chapter { start: number, end: number, name?: string | undefined
 
 export type LiteFFprobeStream = Pick<FFprobeStream, 'index' | 'codec_type' | 'codec_tag' | 'codec_name' | 'disposition' | 'tags' | 'sample_rate' | 'time_base'>;
 
+export interface FileStats {
+  size: number | bigint,
+  atime: number,
+  mtime: number,
+  ctime: number,
+  birthtime: number,
+}
+
 export type AllFilesMeta = Record<string, {
   streams: LiteFFprobeStream[];
-  formatData: FFprobeFormat;
+  format: FFprobeFormat;
   chapters: FFprobeChapter[];
 }>
 
@@ -155,6 +164,8 @@ export interface StreamParams {
   disposition?: string,
   bsfH264Mp4toannexb?: boolean,
   bsfHevcMp4toannexb?: boolean,
+  bsfHevcAudInsert?: boolean,
+  tag?: string | undefined,
 }
 export type ParamsByStreamId = Map<string, Map<number, StreamParams>>;
 
@@ -162,3 +173,5 @@ export interface BatchFile {
   path: string,
   name: string,
 }
+
+export type KeyboardLayoutMap = Map<string, string>;

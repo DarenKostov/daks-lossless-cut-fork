@@ -1,9 +1,11 @@
+import i18n from 'i18next';
+
 import { getRealVideoStreams, getVideoTimebase } from './util/streams';
 
 import { readKeyframesAroundTime, findNextKeyframe, findKeyframeAtExactTime } from './ffmpeg';
-import { FFprobeStream } from '../../../ffprobe';
-
-const { stat } = window.require('fs-extra');
+import type { FFprobeStream } from '../../common/ffprobe';
+import { UserFacingError } from '../errors';
+import { readFileSize } from './util';
 
 
 const mapVideoCodec = (codec: string) => ({ av1: 'libsvtav1' }[codec] ?? codec);
@@ -34,7 +36,7 @@ export async function needsSmartCut({ path, desiredCutFrom, videoStream }: {
     keyframes = await readKeyframes(60);
     nextKeyframe = findNextKeyframe(keyframes, desiredCutFrom);
   }
-  if (nextKeyframe == null) throw new Error('Cannot find any keyframe after the desired start cut point');
+  if (nextKeyframe == null) throw new UserFacingError(i18n.t('Cannot find any keyframe after the desired start cut point'));
 
   console.log('Smart cut from keyframe', { keyframe: nextKeyframe.time, desiredCutFrom });
 
@@ -60,9 +62,9 @@ export async function getCodecParams({ path, fileDuration, streams }: {
   let videoBitrate = parseInt(videoStream.bit_rate!, 10);
   if (Number.isNaN(videoBitrate)) {
     console.warn('Unable to detect input bitrate.');
-    const stats = await stat(path);
+    const size = await readFileSize(path);
     if (fileDuration == null) throw new Error('Video duration is unknown, cannot estimate bitrate');
-    videoBitrate = (stats.size * 8) / fileDuration;
+    videoBitrate = (size * 8) / fileDuration;
     console.warn('Estimated bitrate.', videoBitrate / 1e6, 'Mbit/s');
   }
 

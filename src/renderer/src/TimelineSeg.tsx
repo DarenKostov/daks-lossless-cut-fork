@@ -1,12 +1,12 @@
 import { memo, useCallback, useMemo } from 'react';
-import { motion, AnimatePresence, MotionStyle } from 'framer-motion';
-import { FaTrashAlt } from 'react-icons/fa';
-import Color from 'color';
+import type { MotionStyle } from 'motion/react';
+import { motion, AnimatePresence } from 'motion/react';
+import { FaSave, FaTrashAlt } from 'react-icons/fa';
+import type { ColorInstance } from 'color';
 
-import { mySpring } from './animations';
 import useUserSettings from './hooks/useUserSettings';
 import { useSegColors } from './contexts';
-import { FormatTimecode, StateSegment } from './types';
+import type { FormatTimecode, StateSegment } from './types';
 
 
 const markerButtonStyle: React.CSSProperties = { fontSize: 10, minWidth: 0, letterSpacing: '-.1em', color: 'white' };
@@ -16,14 +16,14 @@ function Marker({
 }: {
   seg: StateSegment,
   segNum: number,
-  color: Color,
+  color: ColorInstance,
   isActive: boolean,
   selected: boolean,
   onClick: () => void,
   getTimePercent: (a: number) => string,
   formatTimecode: FormatTimecode,
 }) {
-  const { darkMode } = useUserSettings();
+  const { darkMode, prefersReducedMotion, springAnimation } = useUserSettings();
 
   const pinColor = darkMode ? color.saturate(0.2).lightness(40).string() : color.desaturate(0.2).lightness(50).string();
 
@@ -59,8 +59,8 @@ function Marker({
   return (
     <motion.div
       style={style}
-      layout
-      transition={mySpring}
+      layout={!prefersReducedMotion}
+      transition={springAnimation}
       initial={{ opacity: 0, scale: 0 }}
       animate={{ opacity: selected ? 1 : 0.5, scale: 1 }}
       exit={{ opacity: 0, scale: 0 }}
@@ -84,7 +84,7 @@ function Segment({
 }: {
   seg: Omit<StateSegment, 'end'> & { end: number },
   segNum: number,
-  color: Color,
+  color: ColorInstance,
   isActive: boolean,
   selected: boolean,
   onClick: () => void,
@@ -92,7 +92,7 @@ function Segment({
   formatTimecode: FormatTimecode,
   invertCutSegments: boolean,
 }) {
-  const { darkMode } = useUserSettings();
+  const { darkMode, prefersReducedMotion, springAnimation } = useUserSettings();
   const { name } = seg;
 
   const border = useMemo(() => {
@@ -164,8 +164,8 @@ function Segment({
   return (
     <motion.div
       style={wrapperStyle}
-      layout
-      transition={mySpring}
+      layout={!prefersReducedMotion}
+      transition={springAnimation}
       initial={{ opacity: 0, scaleX: 0 }}
       animate={{ opacity: 1, scaleX: 1, backgroundColor }}
       exit={{ opacity: 0, scaleX: 0 }}
@@ -181,12 +181,19 @@ function Segment({
             initial={{ scale: 0 }}
             animate={{ scale: 1 }}
             exit={{ scale: 0 }}
-            style={{ width: 16, height: 16, flexShrink: 1 }}
+            style={{ flexShrink: 1 }}
           >
-            <FaTrashAlt
-              style={{ width: '100%', color: 'var(--gray-12)' }}
-              size={16}
-            />
+            <FaTrashAlt style={{ display: 'block', width: '100%', minWidth: '.4em', color: 'white', marginRight: '.1em' }} />
+          </motion.div>
+        )}
+        {!invertCutSegments && !seg.name && (
+          <motion.div
+            initial={{ scale: 0 }}
+            animate={{ scale: 1 }}
+            exit={{ scale: 0 }}
+            style={{ flexShrink: 1 }}
+          >
+            <FaSave style={{ display: 'block', width: '100%', minWidth: '.4em', color: 'white', marginRight: '.1em' }} />
           </motion.div>
         )}
       </AnimatePresence>

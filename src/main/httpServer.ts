@@ -4,7 +4,7 @@ import http from 'node:http';
 import asyncHandler from 'express-async-handler';
 import assert from 'node:assert';
 
-import { homepage } from './constants.js';
+import { homepageUrl } from '../common/constants.js';
 import logger from './logger.js';
 
 
@@ -22,7 +22,7 @@ export default ({ port, onKeyboardAction }: {
 
   const apiRouter = express.Router();
 
-  app.get('/', (_req, res) => res.send(`See ${homepage}`));
+  app.get('/', (_req, res) => res.send(`See ${homepageUrl}`));
 
   app.use('/api', apiRouter);
 
@@ -39,12 +39,11 @@ export default ({ port, onKeyboardAction }: {
 
   server.on('error', (err) => logger.error('http server error', err));
 
-  const startHttpServer = async () => new Promise((resolve, reject) => {
+  const startHttpServer = async () => new Promise<void>((resolve, reject) => {
     // force ipv4
     const host = '127.0.0.1';
     server.listen(port, host, () => {
       logger.info('HTTP API listening on', `http://${host}:${port}/`);
-      // @ts-expect-error tod
       resolve();
     });
 

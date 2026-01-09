@@ -4,7 +4,7 @@ import invariant from 'tiny-invariant';
 import sortBy from 'lodash/sortBy';
 
 import { renderThumbnails as ffmpegRenderThumbnails } from '../ffmpeg';
-import { Thumbnail } from '../types';
+import type { Thumbnail } from '../types';
 import { isDurationValid } from '../segments';
 import { isExecaError } from '../util';
 
@@ -48,7 +48,7 @@ export default ({ filePath, zoomedDuration, zoomWindowStartTime, showThumbnails 
 
     return () => {
       abortController.abort();
-      console.log('Cleanup thumbnails', thumbnails2.map((t) => t.time));
+      if (thumbnails2.length > 0) console.log('Cleanup thumbnails', thumbnails2.map((t) => t.time));
       thumbnails2.forEach((thumbnail) => URL.revokeObjectURL(thumbnail.url));
       setThumbnails([]);
     };

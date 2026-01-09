@@ -1,8 +1,8 @@
 import { test, expect } from 'vitest';
 
 import { getMapStreamsArgs, getStreamIdsToCopy } from './streams';
-import { FFprobeStreamDisposition } from '../../../../ffprobe';
-import { LiteFFprobeStream } from '../types';
+import type { FFprobeStreamDisposition } from '../../../common/ffprobe';
+import type { LiteFFprobeStream } from '../types';
 
 
 const makeDisposition = (override?: Partial<FFprobeStreamDisposition>): FFprobeStreamDisposition => ({
@@ -56,7 +56,7 @@ test('getMapStreamsArgs', () => {
     '-map', '0:0', '-c:0', 'copy',
     '-map', '0:1', '-c:1', 'copy',
     '-map', '0:2', '-c:2', 'copy',
-    '-map', '0:3', '-c:3', 'copy', '-tag:3', 'hvc1',
+    '-map', '0:3', '-c:3', 'copy',
     '-map', '0:4', '-c:4', 'copy',
     '-map', '0:5', '-c:5', 'copy',
     '-map', '0:6', '-c:6', 'copy',

@@ -11,8 +11,9 @@ import { z } from 'zod';
 
 import { formatDuration } from './util/duration';
 import { invertSegments, sortSegments } from './segments';
-import { GetFrameCount, SegmentBase, SegmentTags } from './types';
+import type { GetFrameCount, SegmentBase, SegmentTags } from './types';
 import parseCmx3600 from './cmx3600';
+import { UserFacingError } from '../errors';
 
 
 export const getTimeFromFrameNum = (detectedFps: number, frameNum: number) => frameNum / detectedFps;
@@ -57,7 +58,7 @@ const csvHeader = [
 export function parseCsv(csvStr: string, parseTimeFn: (a: string) => number | undefined) {
   const rows: string[][] = csvParse(csvStr, {});
 
-  if (rows.length === 0) throw new Error(i18n.t('No rows found'));
+  if (rows.length === 0) throw new UserFacingError(i18n.t('No rows found'));
   invariant(rows.every((row) => row.length > 0), 'One row had no columns.');
 
   // from header
@@ -99,7 +100,7 @@ export function parseCsv(csvStr: string, parseTimeFn: (a: string) => number | un
     && (end === undefined || !Number.isNaN(end))
   ))) {
     console.log(mapped);
-    throw new Error(i18n.t('Invalid start or end value. Must contain a number of seconds'));
+    throw new UserFacingError(i18n.t('Invalid start or end value. Must contain a number of seconds'));
   }
 
   return mapped;
@@ -194,7 +195,7 @@ export async function parseMplayerEdl(text: string) {
     ...map(sceneMarkers, 'Scene Marker', 2),
     ...map(commercialBreaks, 'Commercial Break', 3),
   ];
-  if (out.length === 0) throw new Error(i18n.t('Invalid EDL data found'));
+  if (out.length === 0) throw new UserFacingError(i18n.t('Invalid EDL data found'));
   return out;
 }
 
@@ -477,8 +478,11 @@ export function formatSrt(segments: SegmentBase[]) {
   return segments.reduce((acc, segment, index) => `${acc}${index > 0 ? '\r\n' : ''}${index + 1}\r\n${formatDuration({ seconds: segment.start }).replaceAll('.', ',')} --> ${formatDuration({ seconds: segment.end }).replaceAll('.', ',')}\r\n${segment.name || '-'}\r\n`, '');
 }
 
-export function parseGpsLine(line: string) {
-  const gpsMatch = line.match(/^\s*([^,]+),\s*SS\s+([^,]+),\s*ISO\s+([^,]+),\s*EV\s+([^,]+)(?:,\s*DZOOM\s+([^,]+))?,\s*GPS\s+\(([^,]+),\s*([^,]+),\s*([^,]+)\),\s*D\s+([^m]+)m,\s*H\s+([^m]+)m,\s*H\.S\s+([^m]+)m\/s,\s*V\.S\s+([^m]+)m\/s\s*$/);
+export function parseDjiGps1(lines: string[]) {
+  const firstLine = lines[0];
+  if (firstLine == null) return undefined;
+
+  const gpsMatch = firstLine.match(/^\s*([^,]+),\s*SS\s+([^,]+),\s*ISO\s+([^,]+),\s*EV\s+([^,]+)(?:,\s*DZOOM\s+([^,]+))?,\s*GPS\s+\(([^,]+),\s*([^,]+),\s*([^,]+)\),\s*D\s+([^m]+)m,\s*H\s+([^m]+)m,\s*H\.S\s+([^m]+)m\/s,\s*V\.S\s+([^m]+)m\/s\s*$/);
   if (!gpsMatch) return undefined;
   return {
     f: gpsMatch[1]!,
@@ -486,13 +490,42 @@ export function parseGpsLine(line: string) {
     iso: parseInt(gpsMatch[3]!, 10),
     ev: parseFloat(gpsMatch[4]!),
     dzoom: gpsMatch[5] != null ? parseFloat(gpsMatch[5]) : undefined,
-    lat: parseFloat(gpsMatch[6]!),
-    lng: parseFloat(gpsMatch[7]!),
+    lng: parseFloat(gpsMatch[6]!),
+    lat: parseFloat(gpsMatch[7]!),
     alt: parseFloat(gpsMatch[8]!),
     distance: parseFloat(gpsMatch[9]!),
     height: parseFloat(gpsMatch[10]!),
     horizontalSpeed: parseFloat(gpsMatch[11]!),
     verticalSpeed: parseFloat(gpsMatch[12]!),
+  };
+}
+
+export function parseDjiGps2(lines: string[]) {
+  const xml = new XMLParser().parse(lines.join('\n'));
+  invariant(typeof xml.font === 'string');
+  const line: string = xml.font.split('\n')[2];
+  invariant(line != null);
+  const records: Record<string, string> = {};
+  const pairsMatch = line.match(/([^\s:[]+\s*:\s*[^\s\]]+)+/g);
+  if (pairsMatch == null) return undefined;
+  for (const match of pairsMatch) {
+    const split = match.split(':');
+    if (split.length === 2) {
+      const [key, value] = split;
+      if (key != null && value != null) {
+        records[key.trim()] = value.trim();
+      }
+    }
+  }
+  const altitude = parseFloat(records['abs_alt']!);
+  const lat = parseFloat(records['latitude']!);
+  const lng = parseFloat(records['longitude']!);
+  invariant(!Number.isNaN(lat));
+  invariant(!Number.isNaN(lng));
+  return {
+    altitude: Number.isNaN(altitude) ? undefined : altitude,
+    lat,
+    lng,
   };
 }
 

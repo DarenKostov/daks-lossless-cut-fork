@@ -1,6 +1,8 @@
-import { memo, ReactNode, useCallback } from 'react';
+import type { ReactNode } from 'react';
+import { memo, useCallback } from 'react';
 import { FaClipboard } from 'react-icons/fa';
-import { MotionStyle, motion, useAnimation } from 'framer-motion';
+import type { MotionStyle } from 'motion/react';
+import { motion, useAnimation } from 'motion/react';
 import i18n from '../i18n';
 
 const electron = window.require('electron');
@@ -16,8 +18,8 @@ function CopyClipboardButton({ text, style, children = ({ onClick }) => <FaClipb
   const onClick = useCallback(() => {
     clipboard.writeText(text);
     animation.start({
-      scale: [1, 2, 1],
-      transition: { duration: 0.3 },
+      scale: [1, 1.5, 1],
+      transition: { duration: 0.2 },
     });
   }, [animation, text]);
 

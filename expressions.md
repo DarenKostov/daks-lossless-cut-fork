@@ -1,17 +1,11 @@
 # Expressions
 
-LosslessCut has support for normal JavaScript expressions.
+This page has moved to [docs/expressions.md](docs/expressions.md)
 
 ## Select segments by expression
 
-You will be given a variable `segment` and can create an expression that returns `true` or `false`. For example to select all segments with a duration of less than 5 seconds use this expression:
-
-```js
-segment.duration < 5
-```
+Moved to [Select segments by expression](docs/expressions.md#select-segments-by-expression)
 
 ## Edit segments by expression
 
-LosslessCut has support for normal JavaScript expressions. You will be given a variable `segment` for each selected segment and can return a new segment with modified properties.
-
-See more examples in-app.
+Moved to [Edit segments by expression](docs/expressions.md#edit-segments-by-expression)

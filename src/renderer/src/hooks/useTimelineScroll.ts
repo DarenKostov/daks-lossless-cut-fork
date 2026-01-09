@@ -1,8 +1,10 @@
-import { WheelEventHandler, useCallback } from 'react';
+import type { WheelEventHandler } from 'react';
+import { useCallback } from 'react';
 import { t } from 'i18next';
 
 import normalizeWheel from './normalizeWheel';
-import { ModifierKey } from '../../../../types';
+import type { ModifierKey } from '../../../common/types';
+import { getMetaKeyName } from '../util';
 
 export const keyMap = {
   ctrl: 'ctrlKey',
@@ -12,10 +14,10 @@ export const keyMap = {
 } as const;
 
 export const getModifierKeyNames = () => ({
-  ctrl: [t('Ctrl')],
-  shift: [t('Shift')],
-  alt: [t('Alt')],
-  meta: [t('⌘ Cmd'), t('⊞ Win')],
+  ctrl: t('Ctrl'),
+  shift: t('Shift'),
+  alt: t('Alt'),
+  meta: getMetaKeyName(),
 });
 
 export const getModifier = (key: ModifierKey) => getModifierKeyNames()[key];

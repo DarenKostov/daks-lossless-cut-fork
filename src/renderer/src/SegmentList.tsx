@@ -1,29 +1,33 @@
-import { memo, useMemo, useRef, useCallback, useState, SetStateAction, Dispatch, ReactNode, MouseEventHandler, CSSProperties, useEffect } from 'react';
-import { FaYinYang, FaSave, FaPlus, FaMinus, FaTag, FaSortNumericDown, FaAngleRight, FaRegCheckCircle, FaRegCircle } from 'react-icons/fa';
+import type { SetStateAction, Dispatch, MouseEventHandler, CSSProperties } from 'react';
+import { memo, useMemo, useRef, useCallback, useState, useEffect } from 'react';
+import { FaYinYang, FaSave, FaPlus, FaMinus, FaTag, FaSortNumericDown, FaRegCheckCircle, FaRegCircle, FaTimes } from 'react-icons/fa';
 import { AiOutlineSplitCells } from 'react-icons/ai';
-import { motion } from 'framer-motion';
+import { motion } from 'motion/react';
 import { useTranslation, Trans } from 'react-i18next';
-import { DndContext, closestCenter, PointerSensor, useSensor, useSensors, DragEndEvent, DragStartEvent, DragOverlay, UniqueIdentifier } from '@dnd-kit/core';
+import type { DragEndEvent, DragStartEvent, UniqueIdentifier } from '@dnd-kit/core';
+import { DndContext, closestCenter, PointerSensor, useSensor, useSensors, DragOverlay } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy, arrayMove, useSortable } from '@dnd-kit/sortable';
 import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { CSS } from '@dnd-kit/utilities';
+import invariant from 'tiny-invariant';
+import prettyBytes from 'pretty-bytes';
 
-import Dialog, { ConfirmButton } from './components/Dialog';
-import Swal from './swal';
 import useContextMenu from './hooks/useContextMenu';
 import useUserSettings from './hooks/useUserSettings';
 import { saveColor, controlsBackground, primaryTextColor, darkModeTransition } from './colors';
 import { useSegColors } from './contexts';
-import { mySpring } from './animations';
 import { getSegmentTags } from './segments';
 import TagEditor from './components/TagEditor';
-import { ContextMenuTemplate, DefiniteSegmentBase, FormatTimecode, GetFrameCount, InverseCutSegment, SegmentBase, SegmentTags, StateSegment } from './types';
-import { UseSegments } from './hooks/useSegments';
+import type { ContextMenuTemplate, DefiniteSegmentBase, FormatTimecode, GetFrameCount, InverseCutSegment, SegmentBase, SegmentColorIndex, SegmentTags, StateSegment } from './types';
+import type { UseSegments } from './hooks/useSegments';
+import * as Dialog from './components/Dialog';
+import { DialogButton } from './components/Button';
+import getSwal from './swal';
 
 
-const buttonBaseStyle = {
-  margin: '0 3px', borderRadius: 3, color: 'white', cursor: 'pointer',
+const buttonBaseStyle: CSSProperties = {
+  margin: '0 3px', borderRadius: 3, color: 'white', cursor: 'pointer', userSelect: 'none',
 };
 
 const disabledButtonStyle = { color: 'var(--gray-10)', backgroundColor: 'var(--gray-6)' };
@@ -61,6 +65,7 @@ const Segment = memo(({
   onExtractSelectedSegmentsFramesAsImages,
   onInvertSelectedSegments,
   onDuplicateSegmentClick,
+  getSegEstimatedSize,
 }: {
   seg: StateSegment | InverseCutSegment,
   index: number,
@@ -92,6 +97,7 @@ const Segment = memo(({
   onExtractSelectedSegmentsFramesAsImages: () => void,
   onInvertSelectedSegments: UseSegments['invertSelectedSegments'],
   onDuplicateSegmentClick: UseSegments['duplicateSegment'],
+  getSegEstimatedSize: UseSegments['getSegEstimatedSize'],
 }) => {
   const { invertCutSegments, darkMode } = useUserSettings();
   const { t } = useTranslation();
@@ -148,6 +154,7 @@ const Segment = memo(({
   useContextMenu(ref, contextMenuTemplate);
 
   const duration = useMemo(() => (seg.end == null ? undefined : seg.end - seg.start), [seg]);
+  const estimatedSize = useMemo(() => getSegEstimatedSize(seg), [getSegEstimatedSize, seg]);
 
   const timeStr = useMemo(() => (
     seg.end == null
@@ -157,7 +164,7 @@ const Segment = memo(({
 
   function renderNumber() {
     if (invertCutSegments || !('segColorIndex' in seg)) {
-      return <FaSave style={{ color: saveColor, marginRight: 5, verticalAlign: 'middle' }} size={14} />;
+      return <FaSave style={{ color: saveColor, marginRight: '.2em', verticalAlign: 'middle' }} size={14} />;
     }
 
     const segColor = getSegColor(seg);
@@ -166,7 +173,7 @@ const Segment = memo(({
     const borderColor = darkMode ? color.lighten(0.5) : color.darken(0.3);
 
     return (
-      <b style={{ color: 'white', padding: '0 4px', marginRight: 3, marginLeft: -3, background: color.string(), border: `1px solid ${isActive ? borderColor.string() : 'transparent'}`, borderRadius: 10, fontSize: 12 }}>
+      <b style={{ color: 'white', padding: '0 .3em', marginRight: '.3em', marginLeft: '-.23em', background: color.string(), border: `.05em solid ${isActive ? borderColor.string() : 'transparent'}`, borderRadius: '.35em', fontSize: '.7em' }}>
         {index + 1}
       </b>
     );
@@ -188,7 +195,14 @@ const Segment = memo(({
 
   const tags = useMemo(() => getSegmentTags('tags' in seg ? seg : {}), [seg]);
 
-  const maybeOnClick = useCallback(() => !invertCutSegments && onClick(index), [index, invertCutSegments, onClick]);
+  const handleSegmentClick = useCallback<MouseEventHandler<HTMLDivElement>>((e) => {
+    e.currentTarget.blur();
+    if (!invertCutSegments) onClick(index);
+  }, [index, invertCutSegments, onClick]);
+
+  const handleDraggableClick = useCallback<MouseEventHandler<HTMLDivElement>>((e) => {
+    e.currentTarget.blur();
+  }, []);
 
   const sortable = useSortable({
     id: seg.segId,
@@ -213,7 +227,7 @@ const Segment = memo(({
       position: 'relative',
       transform: CSS.Transform.toString(sortable.transform),
       transition: transitions.length > 0 ? transitions.join(', ') : undefined,
-      background: 'var(--gray-2)',
+      background: 'var(--gray-1)',
       border: `1px solid ${isActive ? 'var(--gray-10)' : 'transparent'}`,
       borderRadius: 5,
       opacity: !selected && !invertCutSegments ? 0.5 : undefined,
@@ -229,7 +243,7 @@ const Segment = memo(({
     <div
       ref={setRef}
       role="button"
-      onClick={maybeOnClick}
+      onClick={handleSegmentClick}
       onDoubleClick={onDoubleClick}
       style={style}
       className="segment-list-entry"
@@ -240,24 +254,33 @@ const Segment = memo(({
         // eslint-disable-next-line react/jsx-props-no-spreading
         {...sortable.listeners}
         role="button"
-        style={{ cursor, color: 'var(--gray-12)', marginBottom: duration != null ? 3 : undefined, display: 'flex', alignItems: 'center', height: 16 }}
+        tabIndex={-1}
+        style={{ cursor, color: 'var(--gray-12)', marginBottom: duration != null ? '.1em' : undefined, display: 'flex', alignItems: 'center', height: '1em' }}
+        onClick={handleDraggableClick}
       >
         {renderNumber()}
-        <span style={{ cursor, fontSize: Math.min(310 / timeStr.length, 12), whiteSpace: 'nowrap' }}>{timeStr}</span>
+        <span style={{ cursor, fontSize: `${Math.min(1, 26 / timeStr.length) * 0.75}em`, whiteSpace: 'nowrap' }}>{timeStr}</span>
       </div>
 
-      {'name' in seg && seg.name && <span style={{ fontSize: 12, color: primaryTextColor, marginRight: '.3em' }}>{seg.name}</span>}
+      {'name' in seg && seg.name && <span style={{ fontSize: '.75em', color: primaryTextColor, marginRight: '.3em' }}>{seg.name}</span>}
       {Object.entries(tags).map(([name, value]) => (
-        <span style={{ fontSize: 11, backgroundColor: 'var(--gray-5)', color: 'var(--gray-12)', borderRadius: '.4em', padding: '0 .2em', marginRight: '.1em' }} key={name}>{name}:<b>{value}</b></span>
+        <span style={{ fontSize: '.7em', backgroundColor: 'var(--gray-5)', color: 'var(--gray-12)', borderRadius: '.4em', padding: '0 .2em', marginRight: '.1em' }} key={name}>{name}:<b>{value}</b></span>
       ))}
 
       {duration != null && (
         <>
-          <div style={{ fontSize: 13 }}>
+          <div style={{ fontSize: '.75em' }}>
             {t('Duration')} {formatTimecode({ seconds: duration, shorten: true })}
           </div>
-          <div style={{ fontSize: 12 }}>
-            <Trans>{{ durationMsFormatted: Math.floor(duration * 1000) }} ms, {{ frameCount: (duration && getFrameCount(duration)) ?? '?' }} frames</Trans>
+          <div style={{ fontSize: '.75em' }}>
+            <Trans>{{ durationMsFormatted: Math.floor(duration * 1000) }} ms</Trans>
+            <span>, <Trans>{{ frameCount: (duration && getFrameCount(duration)) ?? '?' }} frames</Trans></span>
+            {estimatedSize != null && (
+              <span style={{ fontSize: '.9em' }}>
+                , ~{prettyBytes(estimatedSize, { space: false, maximumFractionDigits: 1, minimumFractionDigits: 0 })}
+              </span>
+            )}
+
           </div>
         </>
       )}
@@ -311,6 +334,7 @@ function SegmentList({
   setEditingSegmentTags,
   setEditingSegmentTagsSegmentIndex,
   onEditSegmentTags,
+  getSegEstimatedSize,
 }: {
   width: number,
   formatTimecode: FormatTimecode,
@@ -351,16 +375,18 @@ function SegmentList({
   setEditingSegmentTags: Dispatch<SetStateAction<SegmentTags | undefined>>,
   setEditingSegmentTagsSegmentIndex: Dispatch<SetStateAction<number | undefined>>,
   onEditSegmentTags: (index: number) => void,
+  getSegEstimatedSize: UseSegments['getSegEstimatedSize'],
 }) {
   const { t } = useTranslation();
-  const { getSegColor } = useSegColors();
+  const { getSegColor, nextSegColorIndex } = useSegColors();
   const [draggingId, setDraggingId] = useState<UniqueIdentifier | undefined>();
 
-  const { invertCutSegments, simpleMode, darkMode } = useUserSettings();
+  const { invertCutSegments, simpleMode, darkMode, springAnimation } = useUserSettings();
 
-  const getButtonColor = useCallback((seg: StateSegment | undefined, next?: boolean) => getSegColor(seg ? { segColorIndex: next ? seg.segColorIndex + 1 : seg.segColorIndex } : undefined).desaturate(0.3).lightness(darkMode ? 45 : 55).string(), [darkMode, getSegColor]);
+  const getButtonColor = useCallback((seg: SegmentColorIndex | undefined, next?: boolean) => getSegColor(seg ? { segColorIndex: next ? seg.segColorIndex + 1 : seg.segColorIndex } : undefined).desaturate(0.3).lightness(darkMode ? 45 : 55).string(), [darkMode, getSegColor]);
   const currentSegColor = useMemo(() => getButtonColor(currentCutSeg), [currentCutSeg, getButtonColor]);
   const segAtCursorColor = useMemo(() => getButtonColor(firstSegmentAtCursor), [getButtonColor, firstSegmentAtCursor]);
+  const nextSegmentColor = useMemo(() => getButtonColor({ segColorIndex: nextSegColorIndex }, false), [getButtonColor, nextSegColorIndex]);
 
   const segmentsTotal = useMemo(() => selectedSegments.reduce((acc, seg) => (seg.end == null ? 0 : seg.end - seg.start) + acc, 0), [selectedSegments]);
 
@@ -368,16 +394,25 @@ function SegmentList({
 
   const sortableList = useMemo(() => segmentsOrInverse.map((seg) => ({ id: seg.segId, seg })), [segmentsOrInverse]);
 
-  let header: ReactNode = t('Segments to export:');
-  if (segmentsOrInverse.length === 0) {
-    header = invertCutSegments ? (
-      <Trans>You have enabled the &quot;invert segments&quot; mode <FaYinYang style={{ verticalAlign: 'middle' }} /> which will cut away selected segments instead of keeping them. But there is no space between any segments, or at least two segments are overlapping. This would not produce any output. Either make room between segments or click the Yinyang <FaYinYang style={{ verticalAlign: 'middle', color: primaryTextColor }} /> symbol below to disable this mode. Alternatively you may combine overlapping segments from the menu.</Trans>
-    ) : t('No segments to export.');
+  function getHeader() {
+    if (segmentsOrInverse.length === 0) {
+      if (invertCutSegments) {
+        return (
+          <Trans>You have enabled the &quot;invert segments&quot; mode <FaYinYang style={{ verticalAlign: 'middle' }} /> which will cut away selected segments instead of keeping them. But there is no space between any segments, or at least two segments are overlapping. This would not produce any output. Either make room between segments or click the Yinyang <FaYinYang style={{ verticalAlign: 'middle' }} /> symbol below to disable this mode. Alternatively you may combine overlapping segments from the menu.</Trans>
+        );
+      }
+      return t('No segments to export.');
+    }
+
+    if (segmentsOrInverse.every((s) => s.end == null)) {
+      return t('Markers:');
+    }
+    return t('Segments to export:');
   }
 
   const onReorderSegs = useCallback(async (index: number) => {
     if (cutSegments.length < 2) return;
-    const { value } = await Swal.fire({
+    const { value } = await getSwal().Swal.fire({
       title: `${t('Change order of segment')} ${index + 1}`,
       text: t('Please enter a number from 1 to {{n}} to be the new order for the current segment', { n: cutSegments.length }),
       input: 'text',
@@ -401,7 +436,7 @@ function SegmentList({
         <div style={{ display: 'flex', padding: '5px 0', alignItems: 'center', justifyContent: 'center', borderBottom: '1px solid var(--gray-6)' }}>
           <FaPlus
             size={24}
-            style={{ ...buttonBaseStyle, background: neutralButtonColor }}
+            style={{ ...buttonBaseStyle, background: nextSegmentColor }}
             role="button"
             title={t('Add segment')}
             onClick={addSegment}
@@ -409,7 +444,7 @@ function SegmentList({
 
           <FaMinus
             size={24}
-            style={{ ...buttonBaseStyle, ...(cutSegments.length >= 2 ? { backgroundColor: currentSegColor } : disabledButtonStyle) }}
+            style={{ ...buttonBaseStyle, ...(cutSegments.length > 0 ? { backgroundColor: currentSegColor } : disabledButtonStyle) }}
             role="button"
             title={t('Remove cutpoint from segment {{segmentNumber}}', { segmentNumber: currentSegIndex + 1 })}
             onClick={() => removeSegment(currentSegIndex)}
@@ -454,7 +489,7 @@ function SegmentList({
           )}
         </div>
 
-        <div style={{ padding: '5px 10px', boxSizing: 'border-box', borderBottom: '1px solid var(--gray-6)', borderTop: '1px solid var(--gray-6)', display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
+        <div style={{ padding: '5px 10px', boxSizing: 'border-box', borderBottom: '1px solid var(--gray-6)', borderTop: '1px solid var(--gray-6)', display: 'flex', justifyContent: 'space-between', fontSize: '.8em' }}>
           <div>{t('Segments total:')}</div>
           <div>{formatTimecode({ seconds: segmentsTotal })}</div>
         </div>
@@ -470,9 +505,9 @@ function SegmentList({
   })), [setEditingSegmentTags]);
 
   const onTagReset = useCallback((tag: string) => setEditingSegmentTags((tags) => {
-    if (tags == null) throw new Error();
+    invariant(tags != null);
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { [tag]: deleted, ...rest } = tags;
+    const { [tag]: _deleted, ...rest } = tags;
     return rest;
   }), [setEditingSegmentTags]);
 
@@ -482,7 +517,7 @@ function SegmentList({
   }, [setEditingSegmentTags, setEditingSegmentTagsSegmentIndex]);
 
   const onSegmentTagsConfirm = useCallback(() => {
-    if (editingSegmentTagsSegmentIndex == null) throw new Error();
+    invariant(editingSegmentTagsSegmentIndex != null);
     updateSegAtIndex(editingSegmentTagsSegmentIndex, { tags: editingSegmentTags });
     onSegmentTagsCloseComplete();
   }, [editingSegmentTags, editingSegmentTagsSegmentIndex, onSegmentTagsCloseComplete, updateSegAtIndex]);
@@ -497,6 +532,7 @@ function SegmentList({
 
   const rowVirtualizer = useVirtualizer({
     count: sortableList.length,
+    gap: 7,
     getScrollElement: () => scrollerRef.current,
     estimateSize: () => 66, // todo this probably needs to be changed if the segment height changes
     overscan: 5,
@@ -565,45 +601,55 @@ function SegmentList({
         onSelectAllMarkers={onSelectAllMarkers}
         onInvertSelectedSegments={onInvertSelectedSegments}
         onDuplicateSegmentClick={onDuplicateSegmentClick}
+        getSegEstimatedSize={getSegEstimatedSize}
       />
     );
   }
 
   return (
     <>
-      {editingSegmentTagsSegmentIndex != null && (
-        <Dialog autoOpen onClose={onSegmentTagsCloseComplete} style={{ width: '100%', maxWidth: '40em' }}>
-          <h1 style={{ marginTop: 0 }}>{t('Edit segment tags')}</h1>
+      <Dialog.Root open={editingSegmentTagsSegmentIndex != null} onOpenChange={(open) => !open && onSegmentTagsCloseComplete()}>
+        <Dialog.Portal>
+          <Dialog.Overlay />
+          <Dialog.Content style={{ width: '40em' }} aria-describedby={undefined}>
+            <Dialog.Title>{t('Edit segment tags')}</Dialog.Title>
 
-          <TagEditor customTags={editingSegmentTags} editingTag={editingTag} setEditingTag={setEditingTag} onTagsChange={onTagsChange} onTagReset={onTagReset} addTagTitle={t('Add segment tag')} />
+            <TagEditor customTags={editingSegmentTags} editingTag={editingTag} setEditingTag={setEditingTag} onTagsChange={onTagsChange} onTagReset={onTagReset} addTagTitle={t('Add segment tag')} />
 
-          <ConfirmButton onClick={onSegmentTagsConfirm} disabled={editingTag != null}><FaSave style={{ verticalAlign: 'baseline', fontSize: '.8em', marginRight: '.3em' }} />{t('Save')}</ConfirmButton>
-        </Dialog>
-      )}
+            <Dialog.ButtonRow>
+              <DialogButton onClick={onSegmentTagsConfirm} disabled={editingTag != null} primary>
+                <FaSave style={{ verticalAlign: 'baseline', fontSize: '.8em', marginRight: '.3em' }} />
+                {t('Save')}
+              </DialogButton>
+            </Dialog.ButtonRow>
+
+            <Dialog.CloseButton />
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
 
       <motion.div
         style={{ width, background: controlsBackground, borderLeft: '1px solid var(--gray-7)', color: 'var(--gray-11)', transition: darkModeTransition, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
         initial={{ x: width }}
         animate={{ x: 0 }}
         exit={{ x: width }}
-        transition={mySpring}
+        transition={springAnimation}
       >
-        <div style={{ fontSize: 14, padding: '0 5px', color: 'var(--gray-12)' }} className="no-user-select">
-          <FaAngleRight
+        <div style={{ padding: '.2em .5em', color: 'var(--gray-12)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '.2em' }} className="no-user-select">
+          <span style={{ fontSize: '.8em' }}>{getHeader()}</span>
+
+          <FaTimes
             title={t('Close sidebar')}
-            size={20}
-            style={{ verticalAlign: 'middle', color: 'var(--gray-11)', cursor: 'pointer', padding: 2 }}
+            style={{ fontSize: '1.1em', verticalAlign: 'middle', color: 'var(--gray-11)', cursor: 'pointer', padding: '.2em .3em' }}
             role="button"
             onClick={toggleSegmentsList}
           />
-
-          {header}
         </div>
 
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd} onDragStart={handleDragStart} modifiers={[restrictToVerticalAxis]}>
           <SortableContext items={sortableList} strategy={verticalListSortingStrategy}>
-            <div ref={scrollerRef} style={{ padding: '0 .1em 0 .3em', overflowX: 'hidden', overflowY: 'scroll', flexGrow: 1 }} className="consistent-scrollbar">
-              <div style={{ height: rowVirtualizer.getTotalSize(), position: 'relative', overflowX: 'hidden' }}>
+            <div ref={scrollerRef} style={{ padding: '0 .2em 0 .5em', overflowX: 'hidden', overflowY: 'scroll', flexGrow: 1 }} className="consistent-scrollbar">
+              <div style={{ height: rowVirtualizer.getTotalSize(), position: 'relative', overflow: 'hidden' }}>
                 {rowVirtualizer.getVirtualItems().map((virtualRow) => {
                   const { id, seg } = sortableList[virtualRow.index]!;
                   const selected = 'selected' in seg ? seg.selected : true;

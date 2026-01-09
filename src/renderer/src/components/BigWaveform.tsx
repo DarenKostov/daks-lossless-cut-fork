@@ -1,8 +1,9 @@
-import { memo, useEffect, useState, useCallback, useRef, CSSProperties, MouseEventHandler, WheelEventHandler, useMemo } from 'react';
-import { Spinner } from 'evergreen-ui';
+import type { CSSProperties, MouseEventHandler, WheelEventHandler } from 'react';
+import { memo, useEffect, useState, useCallback, useRef, useMemo } from 'react';
 
 import { ffmpegExtractWindow } from '../util/constants';
-import { WaveformSlice } from '../types';
+import type { WaveformSlice } from '../types';
+import Spinner from './Spinner';
 
 
 function BigWaveform({ waveforms, relevantTime, playing, fileDurationNonZero, zoom, seekRel, darkMode }: {
@@ -76,6 +77,8 @@ function BigWaveform({ waveforms, relevantTime, playing, fileDurationNonZero, zo
       return () => window.cancelAnimationFrame(raf);
     }
 
+    // todo
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setSmoothTime(undefined);
 
     return undefined;
